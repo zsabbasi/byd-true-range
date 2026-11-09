@@ -24,3 +24,14 @@ __pycache__/
 .claude/
 .cursorignore
 .vscode/
+
+# BYD's own files and captured traffic must never be added
+*.apk
+decompiled/
+captures/
+*.pcap
+*.har
+*.pem
+*.key
+*.keystore
+*.jks

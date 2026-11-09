@@ -24,4 +24,5 @@ Run your own copy (`deploy/README.md`) with a dedicated BYD sub-account. Reports
 welcome as issues. Never paste your password, access token, VIN or exact location.
 
 ## Licence
-No licence has been chosen yet; the maintainer needs to add one before outside contributions are accepted.
+Apache License 2.0 (see `LICENSE`). By contributing you agree your contribution is licensed under it. Security problems: report them privately to the
+maintainer (GitHub's private vulnerability reporting), not in a public issue.

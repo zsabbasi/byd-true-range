@@ -3,7 +3,7 @@
 Reads your car's data from BYD's cloud (the backend the BYD phone app uses) with the open-source
 [`pyBYD`](https://github.com/jkaberg/pyBYD) library, records a local history BYD doesn't keep, and shows a
 **true range as a band with a trust %** that narrows as you drive. **Read-only: it never sends commands to
-the car.** Status: reference implementation, **not yet validated on real BYD data**. Not affiliated with BYD.
+the car.** Status: working on one real Atto 3 (Standard Range, Pakistan); see `docs/SAFETY.md` for what is and is not verified. Not affiliated with BYD.
 Estimates only; never rely on it alone for range planning.
 
 ## Setup (Windows, PowerShell) - about 10 minutes
