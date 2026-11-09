@@ -261,6 +261,7 @@ class HttpServer(Base):
         css = request(port, "/app.css")[2].decode()
         self.assertIn(".map .maptile", css)
         html = request(port, "/")[2].decode()
+        html = "\n".join(l for l in html.splitlines() if 'property="og:' not in l and 'name="twitter:' not in l)   # tags naming this very address
         self.assertNotIn("http://", html.replace("http://www.w3.org", ""))  # no external resources
 
     def test_rebinding_host_is_rejected(self):

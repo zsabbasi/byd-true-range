@@ -33,6 +33,7 @@ import sys
 import time
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from html import escape as html_escape
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -64,11 +65,12 @@ STATIC = {
     "/icons/icon-512.png": ("icons/icon-512.png", "image/png"),
     "/icons/icon-maskable-512.png": ("icons/icon-maskable-512.png", "image/png"),
     "/icons/apple-touch-icon.png": ("icons/apple-touch-icon.png", "image/png"),
+    "/icons/social-card.png": ("icons/social-card.png", "image/png"),
 }
 # Fetched by the browser itself WITHOUT the login cookie (manifest, icons, service worker script), or needed by the sign-in page.
 # They hold no data and no secret: the same files are in the open-source repository.
 PUBLIC = {"/manifest.webmanifest", "/sw.js", "/app.css", "/icons/icon-192.png", "/icons/icon-512.png",
-          "/icons/icon-maskable-512.png", "/icons/apple-touch-icon.png"}
+          "/icons/icon-maskable-512.png", "/icons/apple-touch-icon.png", "/icons/social-card.png"}
 COOKIE_MAX_AGE = 365 * 24 * 3600     # the installed app keeps its login
 SESSION_COOKIE = "byd_session"       # shared-server mode: a random token whose hash is in users.sqlite
 SESSION_MAX_AGE = users.SESSION_DAYS * 86400
@@ -87,7 +89,37 @@ def csp(map_tiles: bool, form_self: bool = False) -> str:
             f"form-action {chr(39)}{'self' if form_self else 'none'}{chr(39)}; frame-ancestors 'none'")
 
 
-TOKEN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+# Link previews (WhatsApp, Telegram, Slack ...): Open Graph tags on the home page, and a plain 200 page for the preview bots when the
+# real page is private. Nothing here is private: it is the same generic text for everybody.
+OG_TITLE = "BYD true range"
+OG_DESC = ("An honest range band, trips, charging log and battery check for your BYD Atto 3, from BYD's cloud. "
+           "Unofficial and read-only.")
+HOST_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:\d{1,5})?$")
+PREVIEW_UA = re.compile(r"whatsapp|facebookexternalhit|facebot|twitterbot|telegrambot|slackbot|discordbot|linkedinbot|skypeuripreview",
+                        re.I)
+
+
+def og_meta(origin: str) -> str:
+    """Open Graph / Twitter card tags. The image must be an absolute URL, so they need the address the page was opened on."""
+    e = html_escape
+    tags = ['<meta property="og:type" content="website">', f'<meta property="og:site_name" content="{e(OG_TITLE)}">',
+            f'<meta property="og:title" content="{e(OG_TITLE)}">', f'<meta property="og:description" content="{e(OG_DESC)}">',
+            f'<meta name="twitter:card" content="{"summary_large_image" if origin else "summary"}">',
+            f'<meta name="twitter:title" content="{e(OG_TITLE)}">', f'<meta name="twitter:description" content="{e(OG_DESC)}">']
+    if origin:
+        img = e(origin + "/icons/social-card.png")
+        tags += [f'<meta property="og:url" content="{e(origin + "/")}">', f'<meta property="og:image" content="{img}">',
+                 '<meta property="og:image:type" content="image/png">', '<meta property="og:image:width" content="1200">',
+                 '<meta property="og:image:height" content="630">', f'<meta property="og:image:alt" content="{e(OG_TITLE)} icon">',
+                 f'<meta name="twitter:image" content="{img}">']
+    return "\n".join(tags)
+
+
+PREVIEW_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>BYD true range</title>
+<meta name="robots" content="noindex"><!--OG--></head><body><p>BYD true range. Open this link in your browser.</p></body></html>"""
+
+
+TOKEN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><!--OG-->
 <meta name="robots" content="noindex"><meta name="theme-color" content="#0b0f14"><title>BYD true range</title><link rel="stylesheet" href="/app.css"></head>
 <body><main><h1 class="tripname">BYD true range</h1>
 <form method="get" action="/" class="signin"><div class="note">This app is private. Paste your access token to open it. It is the line in access_token.txt in the app's data folder.</div>
@@ -396,6 +428,14 @@ class Handler(BaseHTTPRequestHandler):
         """Nominal battery size: per user on a shared server (their own setting), else the one chosen at start / saved."""
         return settings.load()["battery_kwh"] if self.multi_user else self.capacity_kwh
 
+    def _origin(self) -> str:
+        """scheme://host the page was opened on, or "" if the Host header does not look like a host name (it goes into HTML)."""
+        host = (self.headers.get("Host") or "").strip()
+        if not HOST_RE.match(host):
+            return ""
+        https = self.assume_https or self.headers.get("X-Forwarded-Proto", "").lower() == "https"
+        return ("https" if https else "http") + "://" + host
+
     def _cookie_value(self, name: str) -> str | None:
         raw = self.headers.get("Cookie")
         if not raw:
@@ -469,7 +509,10 @@ class Handler(BaseHTTPRequestHandler):
                 })
             if not self._cookie_ok() and url.path not in PUBLIC:
                 if url.path == "/":
-                    return self._send(401, TOKEN_PAGE.encode(), "text/html; charset=utf-8", form_self=True)
+                    meta = og_meta(self._origin())
+                    if PREVIEW_UA.search(self.headers.get("User-Agent", "")):      # a link-preview bot: tell it about the page
+                        return self._send(200, PREVIEW_PAGE.replace("<!--OG-->", meta).encode(), "text/html; charset=utf-8")
+                    return self._send(401, TOKEN_PAGE.replace("<!--OG-->", meta).encode(), "text/html; charset=utf-8", form_self=True)
                 return self._text(401, "Unauthorized. Open the URL printed by server.py (it includes ?token=...).")
 
         path = url.path
@@ -479,6 +522,8 @@ class Handler(BaseHTTPRequestHandler):
             if not f.is_file():
                 return self._text(404, "Not found")
             body = f.read_bytes()
+            if path == "/":
+                body = body.replace(b"<!--OG-->", og_meta(self._origin()).encode())
             if path == "/sw.js":
                 body = body.replace(b"__VERSION__", shell_version().encode())
                 return self._send(200, body, ctype, {"Service-Worker-Allowed": "/"})
