@@ -1,0 +1,26 @@
+# Never commit credentials or captured personal data
+*.env
+!*.env.example
+secrets.env
+credentials.bin
+credential.key
+access_token.txt
+
+# Runtime data (history, sign-in, status, settings, logs)
+cloud/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.csv
+*.log
+viewer_active
+settings.json
+
+# Python / local tooling
+.venv/
+__pycache__/
+*.pyc
+.claude/
+.cursorignore
+.vscode/

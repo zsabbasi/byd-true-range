@@ -1,0 +1,16 @@
+# Never commit credentials or captured personal data
+secrets.env
+*.env
+!secrets.env.example
+.venv/
+__pycache__/
+*.pyc
+data/*.sqlite
+data/*.db
+data/*.csv
+*.log
+data/access_token.txt
+data/*.sqlite-wal
+data/*.sqlite-shm
+data/viewer_active
+settings.json

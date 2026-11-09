@@ -1,0 +1,47 @@
+# systemd unit for the BYD range app (poller + web app) on Linux.
+# Install: see deploy/README.md. Paths assume the app is in /opt/byd-range and runs as the user "byd-range".
+
+[Unit]
+Description=BYD range app (poller + web app)
+Documentation=file:///opt/byd-range/deploy/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=byd-range
+Group=byd-range
+WorkingDirectory=/opt/byd-range/cloud
+ExecStart=/opt/byd-range/cloud/.venv/bin/python run.py --require-token
+Restart=on-failure
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+# History, the encrypted BYD sign-in and the access token live here (owned by the service user, mode 0700).
+Environment=BYD_DATA_DIR=/var/lib/byd-range
+StateDirectory=byd-range
+StateDirectoryMode=0700
+UMask=0077
+
+# The key that encrypts the stored BYD sign-in. It stays in a root-owned file and is handed to the service privately as
+# $CREDENTIALS_DIRECTORY/byd_credential_key, so it is NOT in the data folder and other users cannot read it.
+LoadCredential=byd_credential_key:/etc/byd-range/credential.key
+
+# Hardening. The app only needs to talk to the network (BYD, and the local web server) and write its own data folder.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

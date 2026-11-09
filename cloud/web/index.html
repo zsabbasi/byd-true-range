@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="True range">
+<meta name="robots" content="noindex">
+<title>BYD true range</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main>
+  <nav class="tabs" aria-label="Views">
+    <a id="tab-now" href="#/" class="on">Now</a>
+    <a id="tab-trips" href="#/trips">Trips</a>
+    <a id="tab-charging" href="#/charging">Charging</a>
+    <a id="tab-battery" href="#/battery">Battery</a>
+  </nav>
+
+  <div id="batnote" class="stale" role="status" hidden></div>
+
+  <div id="view-now">
+    <header>
+      <span id="dot" class="dot" aria-hidden="true"></span>
+      <span id="state">Connecting…</span>
+      <span id="age" class="muted"></span>
+    </header>
+
+    <div id="stale" class="stale" role="alert" hidden></div>
+
+    <section class="hero" aria-live="polite">
+      <div class="label">Range</div>
+      <div class="big"><span id="range">—</span><span class="unit"> km</span></div>
+      <div id="band" class="sub"></div>
+
+      <div class="bar" role="img" id="barwrap" aria-label="Range band">
+        <div id="bandbar" class="bandbar"></div>
+        <div id="marker" class="marker"></div>
+        <div id="bydtick" class="bydtick"></div>
+      </div>
+      <div class="legend">
+        <span><i class="sw band"></i>range</span>
+        <span><i class="sw mark"></i>estimate</span>
+        <span><i class="sw byd"></i>BYD says</span>
+      </div>
+
+      <div class="row">
+        <span id="trust" class="chip">Trust —</span>
+        <button type="button" class="info" data-tip="basis" aria-label="How is this calculated?">i</button>
+      </div>
+      <div id="basis" class="tip" role="tooltip" hidden></div>
+    </section>
+
+    <section class="tiles">
+      <div class="tile"><div class="k">Battery</div><div class="v"><span id="soc">—</span><span class="u">%</span></div></div>
+      <div class="tile"><div class="k">BYD range</div><div class="v"><span id="byd">—</span><span class="u"> km</span></div></div>
+      <div class="tile"><div class="k">Speed</div><div class="v"><span id="speed">—</span><span class="u"> km/h</span></div></div>
+      <div class="tile"><div class="k">Consumption</div><div class="v"><span id="cons">—</span><span class="u"> kWh/100</span></div><div id="cons2" class="k"></div></div>
+    </section>
+
+    <section>
+      <h2>Battery, last 24 h</h2>
+      <svg id="spark" viewBox="0 0 300 80" preserveAspectRatio="none" role="img" aria-label="Battery percentage over the last 24 hours"></svg>
+      <div id="sparknote" class="muted small"></div>
+    </section>
+  </div>
+
+  <div id="view-trips" hidden></div>
+  <div id="view-trip" hidden></div>
+  <div id="view-charging" hidden></div>
+  <div id="view-charge" hidden></div>
+  <div id="view-battery" hidden></div>
+  <div id="view-account" hidden></div>
+
+  <footer>
+    Estimate only
+    <button type="button" class="info" data-tip="disclaimer" aria-label="About this estimate">i</button>
+    <a href="#/account" class="footlink">Account</a>
+    <button type="button" id="installbtn" class="pill" hidden>Install app</button>
+    <button type="button" id="wakebtn" class="pill" hidden aria-pressed="false" title="Keeps the screen awake while this page is open, so it keeps updating. Uses battery.">Keep screen on</button>
+    <div id="disclaimer" class="tip" role="tooltip" hidden>Not a safety system. It is built from rounded whole-percent battery data and past driving, so treat the band, not the single number. Do not use it as the only basis for range decisions.</div>
+  </footer>
+</main>
+<script src="/ui.js"></script>
+<script src="/app.js"></script>
+<script src="/battery.js"></script>
+<script src="/charging.js"></script>
+<script src="/account.js"></script>
+<script src="/trips.js"></script>
+<script src="/pwa.js"></script>
+</body>
+</html>

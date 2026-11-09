@@ -1,0 +1,8 @@
+{
+  "battery_kwh": 49.92,
+  "usable_fraction": 1.0,
+  "range_mode": "policy",
+  "tariff_per_kwh": null,
+  "currency": "",
+  "charging_loss_pct": 0
+}
