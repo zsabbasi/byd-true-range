@@ -64,8 +64,10 @@ class Supervisor:
             ch = self.children.pop(uid, None)
             if ch:
                 stop_process(ch[0])
-            users.purge(uid)
-            self.next_try.pop(uid, None)
+            if users.purge(uid):
+                self.next_try.pop(uid, None)
+            else:
+                print("could not wipe a deleted person's folder yet; will retry")
 
     def stop_all(self) -> None:
         for uid in list(self.children):

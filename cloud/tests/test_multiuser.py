@@ -206,8 +206,9 @@ class SignIn(Base):
     def test_the_same_person_signing_in_again_gets_the_same_folder(self):
         port = self.start()
         self.login(port)
-        self.login(port, name="ALICE@example.com ")                        # case and spaces do not make a second user
+        self.login(port, name="  alice@example.com ")                      # surrounding spaces do not make a second user
         self.assertEqual(users.count(), 1)
+        self.assertNotEqual(users.user_id("Alice@example.com", "sg"), users.user_id("alice@example.com", "sg"))  # no guessing about case
         self.assertNotEqual(users.user_id("alice@example.com", "sg"), users.user_id("alice@example.com", "eu"))
 
     def test_user_limit_and_invite_code(self):
@@ -221,8 +222,9 @@ class SignIn(Base):
         st, d, _, _ = self.login(port, name="c@example.com", invite="open-sesame")
         self.assertEqual((st, d["error"]), (403, "full"))
         self.assertTrue(self.call(port, "GET", "/api/account")[1]["full"])
-        # people already in are never locked out by the limit or by a changed invite code
-        self.assertEqual(self.login(port, invite="")[0], 200)
+        # people already in are not locked out by the user limit (but, like everyone, need the invite code)
+        self.assertEqual(self.login(port, invite="open-sesame")[0], 200)
+        self.assertEqual(self.login(port, invite="")[0], 403)
         self.assertTrue(self.call(self.start(invite_code="x"), "GET", "/api/account")[1]["invite_required"])
 
     def test_wrong_logins_are_limited_per_account_and_one_account_never_blocks_another(self):
@@ -423,7 +425,7 @@ class Supervisor(Base):
 class Registry(Base):
     def test_ids_are_stable_keyed_and_safe_as_folder_names(self):
         a = users.user_id("alice@example.com", "sg")
-        self.assertEqual(a, users.user_id(" Alice@Example.com", "sg"))
+        self.assertEqual(a, users.user_id("  alice@example.com ", "sg"))
         self.assertRegex(a, r"^[0-9a-f]{20}$")
         self.assertNotIn("alice", a)
         for bad in ("../x", "", "A" * 20, "g" * 20, "a" * 19):
@@ -435,6 +437,74 @@ class Registry(Base):
     def test_single_owner_mode_cannot_be_mixed_with_an_access_token(self):
         with self.assertRaises(ValueError):
             server.make_server("127.0.0.1", 0, token="t" * 32, capacity_kwh=49.92, usable_fraction=1.0, multi_user=True)
+
+
+class ReviewFindings(Base):
+    """Found by an independent review of this mode; each one is a real hole that was closed."""
+
+    def test_the_invite_code_leaks_nothing_about_who_has_an_account(self):
+        port = self.start(invite_code="open-sesame")
+        self.login(port, invite="open-sesame")                              # alice is a member
+        self.calls.clear()
+        self.fail_with = BydAuthenticationError("bad")
+        member = self.login(port, invite="wrong")[:2]
+        stranger = self.login(port, name="nobody@example.com", invite="wrong")[:2]
+        self.assertEqual(member[0], stranger[0])
+        self.assertEqual(member[1]["error"], stranger[1]["error"])          # the same reply for a member and a stranger
+        self.assertEqual(self.calls, [])                                    # and BYD was never contacted for either
+
+    def test_a_stranger_cannot_use_up_a_members_sign_in_budget(self):
+        port = self.start(invite_code="open-sesame")
+        self.login(port, invite="open-sesame")
+        for i in range(30):                                                 # junk aimed at alice's account name, from 30 addresses
+            self.call(port, "POST", "/api/login", creds(invite="wrong"), headers=dict(HTTPS, **{"X-Forwarded-For": f"7.7.7.{i}"}))
+        st, _, _ = self.call(port, "POST", "/api/login", creds(invite="open-sesame"),
+                             headers=dict(HTTPS, **{"X-Forwarded-For": "8.8.8.8"}))
+        self.assertEqual(st, 200)                                           # alice's own budget was never touched
+
+    def test_successful_logins_never_use_up_an_accounts_wrong_password_budget(self):
+        port = self.start()
+        for _ in range(8):
+            self.assertEqual(self.login(port)[0], 200)
+
+    def test_only_logins_that_reached_byd_and_failed_count_against_the_account(self):
+        port = self.start()
+        for _ in range(10):
+            self.login(port, shared_risk_ack=False)                         # refused before BYD: free
+            self.login(port, acknowledged=False)
+        self.fail_with = BydAuthenticationError("bad")
+        self.assertEqual([self.login(port)[0] for _ in range(5)], [401] * 5)
+
+    def test_the_invite_code_cannot_be_guessed_by_one_address(self):
+        port = self.start(invite_code="open-sesame")
+        codes = [self.login(port, invite=f"guess{i}")[0] for i in range(25)]
+        self.assertEqual(codes[:20], [403] * 20)
+        self.assertEqual(set(codes[20:]), {429})                            # then that address is blocked, even for the right code
+        self.assertEqual(self.login(port, invite="open-sesame")[0], 429)
+
+    def test_a_non_ascii_invite_code_or_token_does_not_crash_the_handler(self):
+        port = self.start(invite_code="open-sesame")
+        st, d, _, _ = self.login(port, invite="é€")
+        self.assertEqual((st, d["error"]), (403, "invite"))
+        port2 = self.start(invite_code="clé-€")                             # the operator's own code may be non-ASCII too
+        self.assertEqual(self.login(port2, invite="clé-€")[0], 200)
+        self.assertTrue(server.safe_eq("é", "é") and not server.safe_eq("é", "e"))
+
+    def test_the_throttle_table_forgets_the_oldest_entries_not_everybodys(self):
+        for i in range(20050):
+            server.multi_note(f"u{i:06d}", f"10.0.{i % 250}.{i % 200}", ("u",))
+        self.assertLessEqual(len(server._mu_attempts), 20001)
+        self.assertIn(server._mu_key("u", "u020049", "x"), server._mu_attempts)
+
+    def test_a_wipe_that_failed_leaves_the_person_marked_removing_so_it_is_retried(self):
+        uid = users.user_id("a@example.com", "sg")
+        users.add(uid)
+        users.request_delete(uid)
+        with mock.patch.object(users.shutil, "rmtree", lambda *a, **k: None):     # a locked file: the folder survives
+            self.assertFalse(users.purge(uid))
+        self.assertEqual((users.state(uid), users.pending_wipes()), ("removing", [uid]))
+        self.assertTrue(users.purge(uid))                                          # next try succeeds
+        self.assertEqual(users.state(uid), "none")
 
 
 if __name__ == "__main__":

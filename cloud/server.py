@@ -282,25 +282,43 @@ def login_rate_limited() -> bool:
         return False
 
 
+def safe_eq(a: str, b: str) -> bool:
+    """Constant-time comparison that cannot raise on non-ASCII text (hmac.compare_digest does for str)."""
+    return hmac.compare_digest(str(a).encode("utf-8", "replace"), str(b).encode("utf-8", "replace"))
+
+
 _mu_attempts: dict[str, list[float]] = {}
 MU_LIMITS = (("u", 5), ("i", 20), ("all", 120))     # per BYD account, per client address, whole server; each per 10 minutes
 
 
-def multi_rate_limited(uid: str, ip: str) -> bool:
-    """Wrong logins can lock a BYD account, so one account gets 5 tries per 10 minutes, one address 20, the whole server 120."""
+def _mu_key(kind: str, uid: str, ip: str) -> str:
+    return {"u": f"u:{uid}", "i": f"i:{ip}", "all": "all"}[kind]
+
+
+def multi_limited(uid: str, ip: str, kinds=("u", "i", "all")) -> bool:
+    """Is any of these budgets used up? (A check only: nothing is counted here.)"""
     now = time.monotonic()
-    keys = {"u": f"u:{uid}", "i": f"i:{ip}", "all": "all"}
+    limits = dict(MU_LIMITS)
     with _login_lock:
-        if len(_mu_attempts) > 20000:
-            _mu_attempts.clear()
-        for kind, limit in MU_LIMITS:
-            lst = _mu_attempts.setdefault(keys[kind], [])
+        for kind in kinds:
+            lst = _mu_attempts.get(_mu_key(kind, uid, ip))
+            if lst is None:
+                continue
             lst[:] = [t for t in lst if now - t < LOGIN_WINDOW_S]
-            if len(lst) >= limit:
+            if len(lst) >= limits[kind]:
                 return True
-        for kind, _ in MU_LIMITS:
-            _mu_attempts[keys[kind]].append(now)
-        return False
+    return False
+
+
+def multi_note(uid: str, ip: str, kinds) -> None:
+    """Count one event. An address is charged for every attempt it makes; a BYD account and the server only for a login BYD REJECTED,
+    so a stranger cannot use up somebody's budget with logins that never reached BYD or that succeeded."""
+    now = time.monotonic()
+    with _login_lock:
+        while len(_mu_attempts) > 20000:                       # forget the oldest entries, never everybody's counters at once
+            _mu_attempts.pop(next(iter(_mu_attempts)))
+        for kind in kinds:
+            _mu_attempts.setdefault(_mu_key(kind, uid, ip), []).append(now)
 
 
 def _byd_login(creds: dict, timeout: float = 25.0) -> list[dict]:
@@ -413,7 +431,7 @@ class Handler(BaseHTTPRequestHandler):
         except cookies.CookieError:
             return False
         m = c.get(COOKIE_NAME)
-        return bool(m) and hmac.compare_digest(m.value, self.token)
+        return bool(m) and safe_eq(m.value, self.token)
 
     # -- routing --
     def do_GET(self):  # noqa: N802
@@ -430,7 +448,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._text(403, "Forbidden host")
         else:
             qtok = parse_qs(url.query).get("token", [""])[0]
-            if qtok and hmac.compare_digest(qtok, self.token):
+            if qtok and safe_eq(qtok, self.token):
                 secure = "; Secure" if self.headers.get("X-Forwarded-Proto", "").lower() == "https" else ""
                 return self._send(302, b"", "text/plain", {
                     "Location": url.path or "/",
@@ -721,7 +739,19 @@ class Handler(BaseHTTPRequestHandler):
                 return bad("shared_risk_ack", "Confirm that you understand the person running this server can see your BYD login "
                            "and your car's data.")
             uid = users.user_id(username, region)
-            limited = multi_rate_limited(uid, self._client_ip())
+            ip = self._client_ip()
+            if self.invite_code:
+                # The code is needed by EVERYONE, member or not, and a wrong one is refused before anything else happens. So it cannot be
+                # used to find out who has an account, to use up a member's sign-in budget, or to make this server relay guesses to BYD.
+                if multi_limited(uid, ip, ("i",)):
+                    return self._json({"error": "rate-limit", "message": "Too many attempts. Wait 10 minutes."}, 429)
+                if not safe_eq(str(data.get("invite") or ""), self.invite_code):
+                    multi_note(uid, ip, ("i",))
+                    return self._json({"error": "invite", "field": "invite", "message": "This server needs an invite code. Ask the "
+                                       "person who runs it."}, 403)
+            limited = multi_limited(uid, ip)
+            if not limited:
+                multi_note(uid, ip, ("i",))                    # every attempt counts against the address it came from
         else:
             limited = login_rate_limited()
         if limited:
@@ -732,9 +762,6 @@ class Handler(BaseHTTPRequestHandler):
             if st == "removing":
                 return self._json({"error": "removing", "message": "Your earlier data is still being removed. Try again in a minute."}, 409)
             if st == "none":
-                if self.invite_code and not hmac.compare_digest(str(data.get("invite") or ""), self.invite_code):
-                    return self._json({"error": "invite", "field": "invite", "message": "This server needs an invite code. Ask the "
-                                       "person who runs it."}, 403)
                 if users.count() >= self.max_users:
                     return self._json({"error": "full", "message": "This server has reached its limit of users."}, 403)
         creds = {"username": username.strip(), "password": password, "base_url": byd_config.base_url_for(region),
@@ -744,6 +771,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001
             names = {c.__name__ for c in type(e).__mro__}
             if "BydAuthenticationError" in names:
+                if uid is not None:
+                    multi_note(uid, ip, ("u", "all"))          # only a login BYD rejected counts against the account and the server
                 msg = str(e).replace(password, "***")[:200]
                 return self._json({"error": "rejected", "code": str(getattr(e, "code", "") or ""), "message": msg,
                                    "hint": "BYD runs one server per region: with correct details, try another region."}, 401)
@@ -872,6 +901,7 @@ def main() -> None:
     if a.multi_user:
         print(f"SHARED SERVER on {a.host}:{a.port}: up to {a.max_users} people, each with their own BYD sign-in and their own data.")
         print("Invite code: " + ("required (BYD_APP_INVITE)" if invite else "none: anyone who can open the page may sign up"))
+        print("Run it with run.py (it starts one poller per person and wipes the data of people who delete themselves).")
         print("Passwords are only accepted over https (X-Forwarded-Proto from your proxy"
               + (", or --assume-https" if a.assume_https else "") + ") or from this machine.")
         print("Ctrl+C to stop.\n")

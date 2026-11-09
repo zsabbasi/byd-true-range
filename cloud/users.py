@@ -71,7 +71,10 @@ def _salt() -> bytes:
 
 
 def user_id(username: str, region: str) -> str:
-    return hmac.new(_salt(), f"{region}|{username.strip().lower()}".encode(), hashlib.sha256).hexdigest()[:20]
+    # The exact name (only surrounding spaces removed). Folding case or Unicode would be a guess about how BYD treats names: if BYD
+    # kept two spellings apart, folding would give two different people one folder. Worst case of NOT folding: one person who
+    # types their name two ways has two tracked copies of the same car.
+    return hmac.new(_salt(), f"{region}|{username.strip()}".encode("utf-8"), hashlib.sha256).hexdigest()[:20]
 
 
 def user_dir(uid: str) -> Path:
@@ -120,12 +123,16 @@ def request_delete(uid: str) -> None:
         c.execute("UPDATE users SET deleted=1 WHERE id=?", (uid,))
 
 
-def purge(uid: str) -> None:
-    """Wipe the folder and forget the user completely (the supervisor calls this once their poller has stopped)."""
+def purge(uid: str) -> bool:
+    """Wipe the folder and forget the user completely (the supervisor calls this once their poller has stopped).
+    If the folder could not be removed (a locked file) the user stays marked "removing" and the next tick tries again."""
     shutil.rmtree(user_dir(uid), ignore_errors=True)
+    if user_dir(uid).exists():
+        return False
     with _lock, _db() as c:
         c.execute("DELETE FROM sessions WHERE uid=?", (uid,))
         c.execute("DELETE FROM users WHERE id=?", (uid,))
+    return True
 
 
 # ------------------------------------------------------------------------------------------------ sessions

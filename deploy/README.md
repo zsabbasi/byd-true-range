@@ -115,13 +115,17 @@ sudo systemctl daemon-reload && sudo systemctl restart byd-range
 
 What it does differently: no access token. Each person signs in on the page with their own BYD account, gets a private folder under `/var/lib/byd-range/users/`,
 their own poller process (started and stopped automatically) and their own battery setting. Nobody can see anyone else's data. `--max-users` (default 10) caps
-sign-ups, `BYD_APP_INVITE` makes new people enter a code (people already signed up are never locked out by either).
+sign-ups. `BYD_APP_INVITE` makes **everyone** enter a code to sign in, members and newcomers alike, and checks it before anything else. **Set one if the server is reachable
+from the internet**: without it, anyone who finds the address can use your server to send login guesses to BYD for any account name (limited to 5 per account per 10 minutes, 20 per address,
+120 per server), and can tell whether a given account name is already a member when the server is full.
 
 * **HTTPS is required.** The server refuses to accept a password except over HTTPS (it trusts the proxy's `X-Forwarded-Proto: https`; add `--assume-https` if your
   proxy terminates TLS but does not send it) or from the machine itself. Put Caddy, nginx or a tunnel in front. Be aware that a tunnel provider (ngrok, Cloudflare) ends
   the encryption on its own servers, so **it can see the passwords that testers type**. Caddy or nginx on your own server with your own domain does not have that problem.
 * **Resources:** roughly 40 to 60 MB of memory per signed-in person (one Python poller each). A small VPS handles ten comfortably.
-* **Wrong logins can lock a BYD account**, so each BYD account gets 5 sign-in attempts per 10 minutes, each address 20, the whole server 120.
+* **Wrong logins can lock a BYD account**, so each BYD account gets 5 *rejected* sign-ins per 10 minutes (successful ones and ones refused before BYD do not count), each address 20 attempts, the whole server 120 rejected.
+  Your proxy must **append** to `X-Forwarded-For` (nginx `$proxy_add_x_forwarded_for` and Caddy do); the server uses the last entry to tell addresses apart.
+* **Run it with `run.py`**, which starts the pollers and wipes the data of people who delete themselves. Started as `server.py --multi-user` alone, nothing wipes them.
 * **A person deleting their data** from the Account page ends their sessions at once; within about 10 seconds the supervisor stops their poller and wipes their folder.
   You can also remove someone by stopping the service, deleting `/var/lib/byd-range/users/<id>` (ids are opaque, derived from the account), and starting it again.
 * **Backups:** back up `/var/lib/byd-range` (no passwords in plain text; the key in `/etc/byd-range/credential.key` stays out of it). Tell people their history is in your backups.

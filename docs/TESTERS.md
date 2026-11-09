@@ -27,7 +27,7 @@ This is a **shared test server** run by someone you know. To keep reading your c
 2. Enter your **second** BYD account and its password.
 3. Country is already set to **Pakistan**. If you are somewhere else, choose "Other country" and type the two-letter code.
 4. Tick both boxes (the second account, and that you understand who can see your data), then tap **Sign in**. It can take up to 25 seconds.
-5. If the server asks for an **invite code**, type the one you were given.
+5. If the server asks for an **invite code**, type the one you were given. You will need it every time you sign in on a new device. You will need it every time you sign in on a new device. You will need it every time you sign in on a new device.
 6. You will then be asked for your **battery size**. In Pakistan most Atto 3 cars are the **Standard Range (49.92 kWh)**, but check your own car's papers: the app cannot tell, and a wrong choice makes every range number wrong.
 
 ## Put it on your home screen (optional)

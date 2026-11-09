@@ -480,6 +480,18 @@ page driven in headless Edge as a first-time visitor. **Not verified / open:** r
 shared mode; an independent security review of the isolation; iPhone; a guest/view-only role is not needed in shared mode but still does not exist for single-owner mode.
 **Known limits:** the host can read everyone's data (said on the page); a tunnel provider ends TLS and so sees passwords; spamming an account name can block its sign-in for 10 minutes.
 
+## 6ab. Independent security review of shared mode, and what it changed (2026-11-09)
+
+A separate reviewer (a fresh agent given only the code and the threat model, read-only) traced the new mode adversarially. **Found no** cross-user leak, no anonymous data route, no
+path traversal, no cache or thread-local bleed, no session or CSRF flaw, no front-end injection. **Real findings, all fixed with tests (8 new):** (1) *membership oracle*: with an
+invite code set, a 403 "invite" vs 401/409 told a stranger whether an account name was a member; the invite is now required of everyone and checked first, so the reply is the same
+(2) *unauthenticated lock-out and password relay*: junk POSTs consumed a victim's sign-in budget and, for members, forwarded wrong passwords to BYD; now only logins that reached BYD and
+were rejected count against an account and the server, an address is charged for every attempt, and the invite check comes first (3) *a non-ASCII invite code or token crashed the handler*
+(`hmac.compare_digest` raises on non-ASCII text): all comparisons now go through `safe_eq`. **Suspicions also closed:** the user id now hashes the exact account name (case folding was a
+guess about BYD that could have mapped two people to one folder); the throttle table drops its oldest entries instead of clearing everyone's counters; a wipe that fails keeps the person
+"removing" and is retried; the server says to start it with `run.py`. **Left as documented limits:** a member can be blocked for 10 minutes by someone guessing their password through the
+server; without an invite code the server relays login guesses to BYD within the limits; the proxy must append to `X-Forwarded-For`.
+
 ## 6z. Bug: range far above anything the car has done (2026-11-09)
 
 **Report (owner):** during a drive the app showed ~400 km near 80% battery. **Replay of the stored drive** (08:25-11:09, 260 readings, current code):
