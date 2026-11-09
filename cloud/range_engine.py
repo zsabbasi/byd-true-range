@@ -50,6 +50,9 @@ MIN_DROP_TRANSITION = 3.0         # min SOC drop (percent points) between the wi
 PRIOR_CV = 0.20                   # driving-variability assumed before there is data
 PRIOR_WEIGHT = 3.0                # how many chunks the prior is worth
 CV_FLOOR = 0.05                   # real-world variability never reduces below this
+CV_CAP = 0.45                     # ...and bad data can never push it above this: half-width <= ~0.6, so the low end stays above ~40%
+GAP_KM = 4.0                      # readings further apart than this in distance mean an UNWATCHED stretch (the app was not polling)
+ROBUST_MIN_CHUNKS = 4             # from this many chunks, variability is measured robustly (median-based), not by one outlier
 TRUST_ZERO_HALF_WIDTH = 0.40      # band half-width (fraction of range) that scores 0% trust
 
 
@@ -86,8 +89,8 @@ def _insufficient(soc_now: float | None, usable_kwh: float) -> RangeResult:
 def split_runs(readings: list[dict], charge_rise: float = 2.0) -> list[list[dict]]:
     """
     readings: oldest-first dicts with ``soc`` and ``odometer_km``. Returns runs (oldest-first lists).
-    A new run starts when SOC rises by >= charge_rise (charging / big regen) or the odometer goes backwards
-    (glitch). A 1% rise is display jitter and is tolerated. Readings with missing values are dropped.
+    A new run starts when SOC rises by >= charge_rise (charging / big regen), when it rises at all while the odometer is
+    unchanged (slow charging), or when the odometer goes backwards (glitch). A 1% rise while driving is display jitter and is tolerated. Readings with missing values are dropped.
     """
     runs: list[list[dict]] = []
     cur: list[dict] = []
@@ -97,7 +100,11 @@ def split_runs(readings: list[dict], charge_rise: float = 2.0) -> list[list[dict
             continue
         if cur:
             prev = cur[-1]
-            if soc - prev["soc"] >= charge_rise or odo < prev["odometer_km"]:
+            # A rise with the odometer standing still is charging, however slowly the percent creeps up (a slow AC charge gains
+            # about 1% per reading and would never reach charge_rise). Without this, a drive before and a drive after a charge
+            # looked like ONE drive, and the chunk across the charge gave nonsense (53 km for 3%).
+            charging = soc > prev["soc"] and odo == prev["odometer_km"]
+            if soc - prev["soc"] >= charge_rise or odo < prev["odometer_km"] or charging:
                 runs.append(cur)
                 cur = []
         cur.append(r)
@@ -134,11 +141,18 @@ def _gather(runs: list[list[dict]], target_km: float) -> list[list[dict]]:
 
 
 def _chunks(tails: list[list[dict]], chunk_drop: float) -> list[float]:
-    """km-per-% for anchored chunks (>= chunk_drop % SOC each) inside the picked tails."""
+    """km-per-% for anchored chunks (>= chunk_drop % SOC each) inside the picked tails.
+    A jump of more than GAP_KM between two readings is a stretch nobody watched (the percent it used is not paired with the
+    distance in a trustworthy way: it may include a top-up or a second drive), so no chunk may span it."""
     out: list[float] = []
     for tail in tails:
         anchor = tail[0]
+        prev = anchor
         for r in tail[1:]:
+            if r["odometer_km"] - prev["odometer_km"] > GAP_KM:
+                anchor = prev = r
+                continue
+            prev = r
             drop = anchor["soc"] - r["soc"]
             if drop >= chunk_drop:
                 km = r["odometer_km"] - anchor["odometer_km"]
@@ -151,14 +165,20 @@ def _chunks(tails: list[list[dict]], chunk_drop: float) -> list[float]:
 def _cv(values: list[float]) -> tuple[float, int]:
     """Variability (coefficient of variation), shrunk towards the prior, floored."""
     n = len(values)
-    if n >= 2:
+    if n >= ROBUST_MIN_CHUNKS:
+        # median and median-absolute-deviation: one odd chunk (a hill, a long stop with the A/C on, a data glitch) cannot dominate
+        med = sorted(values)[n // 2] if n % 2 else sum(sorted(values)[n // 2 - 1:n // 2 + 1]) / 2
+        mad = sorted(abs(v - med) for v in values)
+        mad = mad[n // 2] if n % 2 else sum(mad[n // 2 - 1:n // 2 + 1]) / 2
+        sample_cv = 1.4826 * mad / med if med > 0 else PRIOR_CV
+    elif n >= 2:
         mean = sum(values) / n
         var = sum((v - mean) ** 2 for v in values) / (n - 1)
         sample_cv = math.sqrt(var) / mean if mean > 0 else PRIOR_CV
     else:
         sample_cv = PRIOR_CV
     eff = (n * sample_cv + PRIOR_WEIGHT * PRIOR_CV) / (n + PRIOR_WEIGHT) if n >= 2 else PRIOR_CV
-    return max(eff, CV_FLOOR), n
+    return min(max(eff, CV_FLOOR), CV_CAP), n
 
 
 def _estimate_legacy(

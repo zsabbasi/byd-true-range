@@ -480,6 +480,19 @@ page driven in headless Edge as a first-time visitor. **Not verified / open:** r
 shared mode; an independent security review of the isolation; iPhone; a guest/view-only role is not needed in shared mode but still does not exist for single-owner mode.
 **Known limits:** the host can read everyone's data (said on the page); a tunnel provider ends TLS and so sees passwords; spamming an account name can block its sign-in for 10 minutes.
 
+## 6ac. Bug: the low end of the band collapsed to a few km (2026-11-09)
+
+**Report (owner, testing on the Azure server):** "the lower range was too low a couple of times". **Replay of the stored drive** (the same one as 6z): at 77% the band was
+9-446 km around 227 km; at 84-86% it was 62-64 km around 290. **Cause 1 (the main one):** a slow AC charge raises the battery percent about 1% per reading, so it never
+reaches the 2% rise that `split_runs` treats as a charge. A drive before and a drive after the charge were one run, and the chunk spanning the charge read "53 km for 3%"
+(17.7 km per percent, normal is about 3.5). The driving-variability figure (`cv`, the spread of km per percent between chunks) came out at 1.03, shrank to 0.75, and made the band
+half-width 0.96. The same splitter feeds the learned battery capacity, which was exposed too. **Fixes:** (1) a rise in battery percent while the odometer has not moved now starts a new
+run (charging, however slow); (2) a jump of more than 4 km between two readings (an unwatched stretch) cannot sit inside a chunk; (3) from 4 chunks the variability is measured
+by median absolute deviation, so one odd chunk (a hill, a long stop with the A/C on, a glitch) cannot dominate; (4) the variability is capped at 0.45, so whatever the data
+the band's low end stays above about 40% of the estimate. **Replay after:** 77% is 145-309 around 227; 80% is 192-303; 91% is 311-487; variability 0.17-0.28 from up to 8
+chunks. 9 new tests. **Open:** the band is symmetric around the estimate by construction; a lower bound from the worst measured consumption (highway, cold) would be tighter and
+more honest on the low side.
+
 ## 6ab. Independent security review of shared mode, and what it changed (2026-11-09)
 
 A separate reviewer (a fresh agent given only the code and the threat model, read-only) traced the new mode adversarially. **Found no** cross-user leak, no anonymous data route, no
