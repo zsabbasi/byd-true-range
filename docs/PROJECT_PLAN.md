@@ -462,6 +462,24 @@ the old charging code in memory until restarted: restart after Python changes.
 283 tests. Open: charger-metered kWh to check BYD's power scale independently; DC fast-charge session to test the taper handling on
 real data; brief-plug sessions (a few minutes, 0% gain) may deserve a "brief" label.
 
+## 6aa. Shared server: people sign in with their own BYD login (2026-11-09)
+
+**Owner:** "Not everyone can self host. Some testers will use a shared server to track their own vehicles while accepting some risks", and "some are willing to
+test this but they are not developers". This reverses the earlier rule that a BYD password is accepted only on the host's own computer, **for an explicit,
+opt-in `--multi-user` mode only**; the default single-owner mode is unchanged. **Built:** `users.py` (registry: opaque keyed-hash ids, hashed session tokens, 90-day
+sliding sessions, a per-server salt), `multirun.py` (a supervisor: one poller process per person with `BYD_DATA_DIR=<data>/users/<id>`, restart with backoff, wipe on
+delete), `db.use_dir` (a per-thread data folder so each web request works on one person's folder only; `credstore`, `pollstatus`, `settings`, viewer flag, capacity cache
+all follow it), server `--multi-user/--max-users/--assume-https` and `BYD_APP_INVITE`, login in shared mode (BYD validates, the login is stored encrypted in the person's
+own folder, a session cookie is issued), per-person battery size, `Sign out on this device` vs `Delete my data`, a front-door sign-in page in plain language with a required
+"the host can see my login and data" confirmation, `docs/TESTERS.md` for non-developers, `deploy/byd-range-shared.service`. **Protections:** passwords only over HTTPS (or the
+machine itself); 5 attempts per BYD account / 20 per address / 120 per server per 10 min (wrong logins can lock a real account); user cap and optional invite code
+(checked before BYD is contacted); every data endpoint needs a session; a wrong BYD login creates no user and no folder. **Verified:** 25 new tests (isolation of two people
+including the viewer flag and battery size, caps, invite, rate limits, sign-out vs forget, expiry, supervisor, ids), the full suite (430) on Windows and on real Linux,
+and `deploy/e2e/e2e_multiuser.sh` (46 checks, real server and real per-person poller processes, fake pyBYD, restart persistence, delete wipes the folder), and the sign-in
+page driven in headless Edge as a first-time visitor. **Not verified / open:** real non-developer testers; more than a few users; days of running; a real BYD account through
+shared mode; an independent security review of the isolation; iPhone; a guest/view-only role is not needed in shared mode but still does not exist for single-owner mode.
+**Known limits:** the host can read everyone's data (said on the page); a tunnel provider ends TLS and so sees passwords; spamming an account name can block its sign-in for 10 minutes.
+
 ## 6z. Bug: range far above anything the car has done (2026-11-09)
 
 **Report (owner):** during a drive the app showed ~400 km near 80% battery. **Replay of the stored drive** (08:25-11:09, 260 readings, current code):

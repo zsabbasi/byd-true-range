@@ -88,3 +88,11 @@ BYD. There is **no server of ours** in that path. What was built, and its limits
 * **Not covered:** BYD tokens are not scoped read-only, so a stolen session could still control the car through BYD's API; that is why
   a dedicated, revocable sub-account is the recommendation.
 
+
+## Implemented: shared server mode (2026-11-09)
+
+`run.py --multi-user` is a minimal version of hosting option B for a small group of testers: each person signs in with their own BYD account **on the host's page**
+(over HTTPS), and gets their own folder, encrypted login, database, settings and poller process. It deliberately accepts the trade-off the earlier sections tried to
+avoid: the host's machine sees each password in memory and holds each login encrypted at rest, so **the host must be trusted by the testers**, and the page says so and
+requires confirmation. A native client that hands over tokens only (so the host never sees a password) is still not built. See `docs/SAFETY.md` and `docs/PROJECT_PLAN.md`
+section 6aa for the protections, the tests and the known limits.

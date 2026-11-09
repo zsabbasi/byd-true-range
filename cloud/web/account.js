@@ -42,6 +42,7 @@
   const WARN_WHY = "A dedicated sub-account can be revoked without touching your main account, and a leaked sub-account login can do far less damage. BYD may also sign your phone app out when the same account logs in somewhere else. In the BYD app, share your car with a second BYD account and sign in here with that second account. This app only reads data, but a login is a login.";
   const WHERE_PW = "Your password is typed on this computer and sent to BYD over HTTPS. It goes nowhere else. It is stored encrypted on this computer so the app can stay signed in and sign itself back in when BYD's session expires. The app refuses to accept a password from a tunnel, a proxy or the network. Sign out deletes it.";
   const WHY_REMOTE = "A password typed into a web page passes through the network and the machine running this server, and whoever runs the server could capture it. So the server only accepts a BYD password typed on its own computer, never over the network (that includes your phone, a tunnel or a proxy). If this is someone else's server, you cannot give it your BYD login, and it reads one BYD account only. To track your own car: run your own copy (it is open source, see the README), or ask the host to sign in with a sub-account you share from your BYD app. The host can sign in on the server itself, or over an SSH tunnel: ssh -L 8765:localhost:8765 user@server, then open http://localhost:8765.";
+  const WHERE_PW_SHARED = "Your login is sent to BYD to check it, and this server keeps it, encrypted on its disk, so it can keep reading your car for you and build your history. Everyone's data is kept separate, and nobody else who signs in here can see yours. The server's owner is a person with access to the machine, so they could in principle read it. You can delete your login and all your data from this page whenever you like.";
   const REGION_HELP = "BYD runs one server per region and an account only exists on its own. If BYD says 'wrong email or password' with correct details, try another region. Confirmed so far: Pakistan uses Singapore / Asia-Pacific. The other regions are listed because their servers exist, not because every country has been tested.";
 
   // Says exactly why this page counts as remote, so the owner knows what to change.
@@ -86,7 +87,29 @@
     } else if (a.store && a.store.present && !a.store.readable) {
       card.appendChild(el("div", "note", "A stored sign-in exists but cannot be read: " + (a.store.reason || "unknown reason") + "."));
     }
-    if (a.signed_in) {
+    if (a.signed_in && a.multi_user) {
+      const mk = (label, armedLabel, body, after) => {
+        const b = el("button", "pill", label); b.type = "button";
+        let armed = null;
+        b.addEventListener("click", async () => {
+          if (!armed) {
+            b.textContent = armedLabel;
+            armed = setTimeout(() => { armed = null; b.textContent = label; }, 6000);
+            return;
+          }
+          clearTimeout(armed);
+          b.disabled = true;
+          const r = await postJSON("/api/logout", body);
+          if (r.status === 200) { after(); }
+          else { b.disabled = false; b.textContent = (r.data && r.data.message) || "Could not do that"; }
+        });
+        return b;
+      };
+      const row2 = el("div", "row");
+      row2.appendChild(mk("Sign out on this device", "Tap again to sign out here (your car keeps being tracked)", {}, () => { location.hash = "#/account"; location.reload(); }));
+      row2.appendChild(mk("Delete my data", "Tap again: delete ALL my data and stop tracking, for good", { forget: true }, () => { location.hash = "#/account"; location.reload(); }));
+      card.appendChild(row2);
+    } else if (a.signed_in) {
       const out = el("button", "pill", "Sign out");
       out.type = "button";
       let armed = null;
@@ -184,6 +207,7 @@
   }
 
   function buildForm(a, onDone) {
+    const multi = !!a.multi_user;                    // a shared server: people sign in from their own phone with their own BYD account
     const form = el("form", "signin");
     form.setAttribute("autocomplete", "on");
     form.noValidate = true;
@@ -191,20 +215,32 @@
     // The warning is not a tooltip: it is the first thing on the form and must be seen.
     const warn = el("div", "warnbox");
     warn.setAttribute("role", "note");
-    warn.appendChild(el("div", "warnhead", "Never use your primary BYD login here."));
-    warn.appendChild(el("div", null, "Use a dedicated sub-account: share your car with a second BYD account and sign in with that one."));
+    warn.appendChild(el("div", "warnhead", multi ? "Use a second BYD account, not your main one." : "Never use your primary BYD login here."));
+    warn.appendChild(el("div", null, multi
+      ? "In the BYD app, share your car with another BYD account, then sign in here with that second account. Ask the person who invited you if you need help."
+      : "Use a dedicated sub-account: share your car with a second BYD account and sign in with that one."));
     const wi = window.UI.info(WARN_WHY, "Why a sub-account");
     warn.appendChild(wi.btn);
     warn.appendChild(wi.tip);
     form.appendChild(warn);
 
-    const privacy = el("div", "note", "Your password goes to BYD and nowhere else. ");
-    const pi = window.UI.info(WHERE_PW, "Where your password goes");
-    privacy.appendChild(pi.btn);
-    form.appendChild(privacy);
-    form.appendChild(pi.tip);
+    if (multi) {
+      const risk = el("div", "stale");
+      const rl = el("div", null, "The person who runs this server can see your BYD login and your car's data, including where you drive and charge. Only continue if you trust them. You can delete everything from this page at any time. ");
+      const rinfo = window.UI.info(WHERE_PW_SHARED, "What the server does with your login");
+      rl.appendChild(rinfo.btn);
+      risk.appendChild(rl);
+      risk.appendChild(rinfo.tip);
+      form.appendChild(risk);
+    } else {
+      const privacy = el("div", "note", "Your password goes to BYD and nowhere else. ");
+      const pi = window.UI.info(WHERE_PW, "Where your password goes");
+      privacy.appendChild(pi.btn);
+      form.appendChild(privacy);
+      form.appendChild(pi.tip);
+    }
 
-    if (!a.local) {
+    if (!a.local && !multi) {
       const remote = el("div", "stale");
       const line = el("div", null, "Sign in is turned off on this device: this server does not take a BYD password over the network. ");
       const ri2 = window.UI.info(WHY_REMOTE, "Why you cannot sign in here");
@@ -233,6 +269,7 @@
     country.hidden = true;
     const regionNote = el("div", "note", "");
     const serverLine = el("div", "note", "");
+    const regionBits = [];                         // on a shared server the region stays out of sight unless another country is chosen
     const confirmedPK = (a.confirmed && a.confirmed.PK) || "sg";
     function countryCode() { return countrySel.value === "other" ? country.value.trim().toUpperCase() : "PK"; }
     function showServer() {
@@ -246,6 +283,7 @@
       if (!other) { region.value = confirmedPK; regionNote.textContent = "Confirmed for Pakistan: Singapore / Asia-Pacific."; }
       else if (a.confirmed && a.confirmed[countryCode()]) { region.value = a.confirmed[countryCode()]; regionNote.textContent = "Confirmed for " + countryCode() + "."; }
       showServer();
+      for (const x of regionBits) x.hidden = multi && !other;
       refresh();
     }
     countrySel.addEventListener("change", applyCountry);
@@ -263,17 +301,31 @@
     form.appendChild(ri.tip);
     form.appendChild(regionNote);
     form.appendChild(serverLine);
+    regionBits.push(rrow, regionNote, serverLine);
+    let invite = null;
+    if (a.invite_required) {
+      invite = el("input"); invite.type = "password"; invite.name = "invite"; invite.autocomplete = "off"; invite.maxLength = 128; invite.spellcheck = false;
+      form.appendChild(field("Invite code", invite));
+    }
 
     const ack = el("input"); ack.type = "checkbox"; ack.name = "ack"; ack.id = "ack";
     const ackLabel = el("label", "check");
     ackLabel.appendChild(ack);
     ackLabel.appendChild(el("span", null, " This is a dedicated sub-account, not my primary BYD login."));
     form.appendChild(ackLabel);
+    let ack2 = null;
+    if (multi) {
+      ack2 = el("input"); ack2.type = "checkbox"; ack2.name = "ack2";
+      const l2 = el("label", "check");
+      l2.appendChild(ack2);
+      l2.appendChild(el("span", null, " I understand the person who runs this server can see my BYD login and my car's data."));
+      form.appendChild(l2);
+    }
 
     const msg = el("div", "formmsg");
     msg.setAttribute("role", "status");
     msg.setAttribute("aria-live", "polite");
-    const go = el("button", "primary", "Sign in to BYD");
+    const go = el("button", "primary", multi ? "Sign in" : "Sign in to BYD");
     go.type = "submit";
     const hint = el("div", "note", "");
     form.appendChild(go);
@@ -290,8 +342,10 @@
       if (!pw.value) missing.push("password");
       if (!/^[A-Za-z]{2}$/.test(countryCode())) missing.push("two-letter country code");
       if (!ack.checked) missing.push("the sub-account confirmation");
-      go.disabled = !a.local || missing.length > 0;
-      if (!a.local) hint.textContent = remoteWhy(a);
+      if (ack2 && !ack2.checked) missing.push("the confirmation about who can see your data");
+      if (invite && !invite.value) missing.push("invite code");
+      go.disabled = !(a.local || multi) || missing.length > 0;
+      if (!a.local && !multi) hint.textContent = remoteWhy(a);
       else hint.textContent = missing.length ? "Still needed: " + missing.join(", ") + "." : "";
     }
     for (const ev of ["input", "change", "keyup", "blur"]) form.addEventListener(ev, refresh, true);
@@ -311,6 +365,8 @@
         username: user.value.trim(), password: pw.value, region: region.value, country: countryCode(),
         acknowledged: ack.checked, time_zone: (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"),
       };
+      if (multi) body.shared_risk_ack = !!(ack2 && ack2.checked);
+      if (invite) body.invite = invite.value;
       pw.value = "";                                      // the password does not stay in the page
       let r;
       try { r = await postJSON("/api/login", body); } catch (e) { r = { status: 0, data: { message: "No answer from the app. Is it running?" } }; }
@@ -346,11 +402,15 @@
     const wasSignedIn = box.dataset.signed === "1";
     if (!box.dataset.built || wasSignedIn !== a.signed_in) {
       clear(box);
-      box.appendChild(el("h1", "tripname", "BYD account"));
+      box.appendChild(el("h1", "tripname", a.multi_user && !a.signed_in ? "Sign in with your BYD account" : "BYD account"));
+      if (a.multi_user && !a.signed_in) {
+        box.appendChild(el("div", "note", "Track your own BYD car. Sign in below and this server reads your car's data from BYD and keeps your history, so your range figures get better the more you drive."));
+        if (a.full) box.appendChild(el("div", "stale", "This server has reached its limit of users. Ask the person who runs it."));
+      }
       const st = el("div"); st.id = "acct-status";
       box.appendChild(st);
-      box.appendChild(buildBattery(a));
-      box.appendChild(el("h2", null, a.signed_in ? "Replace the sign-in" : "Sign in to BYD"));
+      if (a.signed_in || !a.multi_user) box.appendChild(buildBattery(a));     // anonymous visitors on a shared server choose it after signing in
+      if (!(a.multi_user && !a.signed_in)) box.appendChild(el("h2", null, a.signed_in ? "Replace the sign-in" : "Sign in to BYD"));
       box.appendChild(buildForm(a, () => { box.dataset.built = ""; location.hash = "#/"; }));
       box.dataset.built = "1";
       box.dataset.signed = a.signed_in ? "1" : "0";

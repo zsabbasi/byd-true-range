@@ -30,12 +30,15 @@ def write_path() -> Path:
     if SETTINGS_FILE:
         return Path(SETTINGS_FILE)
     import db
-    return Path(db.DB_PATH).parent / "settings.json"      # same folder as the history (tests redirect DB_PATH)
+    return db.current_dir() / "settings.json"      # same folder as the history (tests redirect DB_PATH)
 
 
 def settings_path() -> Path:
     """<data dir>/settings.json (the data dir is writable in a service); an older file next to the code is still read."""
     p = write_path()
+    import db
+    if db.dir_override():                    # a user of a shared server never inherits the host's old settings file
+        return p
     return p if p.exists() or not LEGACY_FILE.exists() else LEGACY_FILE
 
 

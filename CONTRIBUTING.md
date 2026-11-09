@@ -5,7 +5,7 @@ Please read `docs/PROJECT_PLAN.md` (decisions and why) first.
 
 ## Ground rules (a PR that breaks one of these will not be merged)
 * **Read-only.** Never send a control command to the car.
-* **Credentials only go to BYD.** No telemetry, no analytics, no third-party requests (the one exception, map tiles, is switchable). The sign-in
+* **Credentials only go to BYD** (shared mode stores them encrypted on the host, and says so; data stays strictly per person). No telemetry, no analytics, no third-party requests (the one exception, map tiles, is switchable). The sign-in
   stays local-only; see `docs/HOSTING_SECURITY.md`.
 * **Dependencies are hash-locked** (`cloud/requirements.txt`). Do not add one casually; explain why in the PR.
 * **No `innerHTML`** in the web app (text goes in with `textContent`); the page runs under a strict CSP.
@@ -16,6 +16,7 @@ Please read `docs/PROJECT_PLAN.md` (decisions and why) first.
 cd cloud
 python -m unittest discover -s tests          # about 400 tests, no BYD account or network needed
 bash ../deploy/e2e/e2e_linux.sh               # Linux end-to-end with a fake pyBYD
+bash ../deploy/e2e/e2e_multiuser.sh           # the same for the shared (multi-user) server
 ```
 Add a test with every change. Tests must never read your real data or credentials (they use temporary folders).
 

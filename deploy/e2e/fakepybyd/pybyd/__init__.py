@@ -37,7 +37,8 @@ class BydClient:
 
     async def get_vehicle_realtime(self, vin, **kw):
         stamp = dt.datetime.fromtimestamp(time.time(), dt.timezone.utc).isoformat()
-        return NS(elec_percent=80.0, total_mileage=12345.0, endurance_mileage=350.0, speed=0.0, gl=0.0, charge_state=None,
+        soc = 80.0 if self.config.username == "sub.account@example.com" else 50.0 + sum(map(ord, self.config.username)) % 45   # each fake account has its own car
+        return NS(elec_percent=soc, total_mileage=12345.0, endurance_mileage=350.0, speed=0.0, gl=0.0, charge_state=None,
                   charging_state=None, vehicle_state=None, power_gear=None, timestamp=stamp, recent_50km_energy="14.2",
                   recent_50km_energy_ev=14.2, online_state=None, connect_state=None)
 

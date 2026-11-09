@@ -41,7 +41,7 @@ KEY_LABELS = {"env": "key file named by BYD_APP_KEY_FILE", "systemd": "systemd c
 
 
 def path() -> Path:
-    return Path(db.DB_PATH).parent / "credentials.bin"
+    return db.current_dir() / "credentials.bin"
 
 
 # ----------------------------------------------------------------------------------------------------- key file ----

@@ -28,7 +28,7 @@ car -> BYD cloud -> pyBYD (one library, audited, hash-locked)
 - **Whole-percent battery data** is why the answer is a band with a trust figure, not a single number.
 - **Battery size is your choice.** BYD's cloud does not say which pack you have. The app asks (Standard Range 49.92 kWh, Extended Range 60.48 kWh, or another size) and, until you choose, says it is assuming Standard Range. The Battery tab then measures the real usable energy from your drives.
 - **Read-only.** No control commands exist in the code. Credentials only ever go to BYD, over HTTPS.
-- **Sign-in is local-only and encrypted at rest.** The password is typed on the computer that runs the app (or through an SSH tunnel to it), never over a tunnel, proxy or the network, and stored AES-256-GCM encrypted with the key outside the data folder. There is no credentials file.
+- **Two ways to run it.** *Your own copy* (default): sign-in is local-only. The password is typed on the computer that runs the app (or through an SSH tunnel to it), never over a tunnel, proxy or the network. *A shared server* (`--multi-user`): for people who cannot self-host, each person signs in on the page with their own BYD account and sees only their own car; the host then holds their logins, which is stated on the page. Either way the login is stored AES-256-GCM encrypted with the key outside the data folder, and there is no credentials file.
 
 ## Compatibility: what has actually been tested
 
@@ -39,6 +39,7 @@ car -> BYD cloud -> pyBYD (one library, audited, hash-locked)
 | Library | `pyBYD` 0.0.79 (hash-locked in `cloud/requirements.txt`) |
 | Server | Python 3.11 or newer; Linux is the target (tested on Ubuntu 22.04, x86-64 and ARM64 dependencies verified); Windows works for development |
 | Phone | Installed and working from Chrome on Android. iPhone untested. |
+| Shared mode | Tested with two fake users on real Linux (46 end-to-end checks) and in unit tests; not yet with real testers. |
 
 Anything else may work or may not. Reports of other regions, models and chargers are the most useful contribution; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -66,6 +67,7 @@ Credentials, tokens, sign-in stores and keys; your recorded history (it contains
 - [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md): decisions, findings, bugs and how each was verified
 - [docs/PYBYD_AUDIT.md](docs/PYBYD_AUDIT.md): supply-chain audit of the one dependency that talks to BYD
 - [docs/HOSTING_SECURITY.md](docs/HOSTING_SECURITY.md): hosting options and what is and is not safe to share
+- [docs/TESTERS.md](docs/TESTERS.md): a plain-language guide for people testing on someone's shared server (no technical knowledge needed)
 - [CONTRIBUTING.md](CONTRIBUTING.md): ground rules, tests, how to help
 
 ## License

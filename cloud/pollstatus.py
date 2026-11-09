@@ -17,7 +17,7 @@ STATES = ("starting", "ok", "waiting-for-signin", "auth-failed", "no-vehicle", "
 
 
 def path() -> Path:
-    return Path(db.DB_PATH).parent / "poller_status.json"
+    return db.current_dir() / "poller_status.json"
 
 
 def write(state: str, detail: str = "") -> None:

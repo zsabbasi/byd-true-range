@@ -101,9 +101,35 @@ Browsers only offer to install, and only run the service worker, on **HTTPS or l
 * Open the `?token=` link once. The login cookie lasts a year. An iPhone home-screen app has its **own** cookie jar: open the
   `?token=` link once inside it, or paste the token into the form it shows.
 
+## 5c. Running a SHARED server (several people, each with their own BYD account)
+
+By default the app serves **one** car, yours. If friends or testers who cannot self-host should use your server for **their own** cars, run it in shared mode.
+Read the risk first: **you will be holding other people's BYD logins** (encrypted on your disk, but your machine decrypts them to poll). Run it only for people who
+know that, and tell them (`docs/TESTERS.md` is written for them).
+
+```bash
+sudo cp /opt/byd-range/deploy/byd-range-shared.service /etc/systemd/system/byd-range.service   # instead of the single-owner unit
+echo 'BYD_APP_INVITE=choose-a-code-to-hand-out' | sudo tee /etc/byd-range/shared.env && sudo chmod 600 /etc/byd-range/shared.env   # optional
+sudo systemctl daemon-reload && sudo systemctl restart byd-range
+```
+
+What it does differently: no access token. Each person signs in on the page with their own BYD account, gets a private folder under `/var/lib/byd-range/users/`,
+their own poller process (started and stopped automatically) and their own battery setting. Nobody can see anyone else's data. `--max-users` (default 10) caps
+sign-ups, `BYD_APP_INVITE` makes new people enter a code (people already signed up are never locked out by either).
+
+* **HTTPS is required.** The server refuses to accept a password except over HTTPS (it trusts the proxy's `X-Forwarded-Proto: https`; add `--assume-https` if your
+  proxy terminates TLS but does not send it) or from the machine itself. Put Caddy, nginx or a tunnel in front. Be aware that a tunnel provider (ngrok, Cloudflare) ends
+  the encryption on its own servers, so **it can see the passwords that testers type**. Caddy or nginx on your own server with your own domain does not have that problem.
+* **Resources:** roughly 40 to 60 MB of memory per signed-in person (one Python poller each). A small VPS handles ten comfortably.
+* **Wrong logins can lock a BYD account**, so each BYD account gets 5 sign-in attempts per 10 minutes, each address 20, the whole server 120.
+* **A person deleting their data** from the Account page ends their sessions at once; within about 10 seconds the supervisor stops their poller and wipes their folder.
+  You can also remove someone by stopping the service, deleting `/var/lib/byd-range/users/<id>` (ids are opaque, derived from the account), and starting it again.
+* **Backups:** back up `/var/lib/byd-range` (no passwords in plain text; the key in `/etc/byd-range/credential.key` stays out of it). Tell people their history is in your backups.
+* **Check it** with `bash deploy/e2e/e2e_multiuser.sh` (fake pyBYD, throwaway folder, nothing real is touched).
+
 ## 6. Updating, backups and checking it
 
-To check a deployment end to end without any BYD account, run `bash /opt/byd-range/deploy/e2e/e2e_linux.sh` (it uses a fake
+To check a deployment end to end without any BYD account, run `bash /opt/byd-range/deploy/e2e/e2e_linux.sh` (and `e2e_multiuser.sh` for shared mode) (it uses a fake
 pyBYD and a throwaway data folder; see `deploy/e2e/README.md`).
 
 ## 6b. Updating and backups
@@ -119,5 +145,6 @@ pyBYD and a throwaway data folder; see `deploy/e2e/README.md`).
 | Variable | Meaning |
 |---|---|
 | `BYD_DATA_DIR` | Where history, the encrypted sign-in and the token live (default `cloud/data`). |
+| `BYD_APP_INVITE` | Shared server only: a code new people must enter to sign up. Set it in `/etc/byd-range/shared.env`, never on the command line. |
 | `BYD_APP_KEY_FILE` | Path of the key file, if you do not use the systemd credential. Must be readable only by the service user. |
 | `XDG_CONFIG_HOME` | Without either of the above, a key is created at `$XDG_CONFIG_HOME/byd-range/credential.key` (mode 0600). |

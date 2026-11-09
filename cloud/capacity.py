@@ -109,7 +109,8 @@ def learn(rows: list[dict], nominal_kwh: float, prior_kwh: float) -> dict:
     return post
 
 
-_cache: dict = {"key": None, "value": None}
+_cache: dict = {}          # database path -> (key, value); bounded, so a shared server cannot grow it without limit
+_CACHE_MAX = 64
 
 
 def learn_from_db(conn, nominal_kwh: float, prior_kwh: float) -> dict:
@@ -117,7 +118,10 @@ def learn_from_db(conn, nominal_kwh: float, prior_kwh: float) -> dict:
     path = conn.execute("PRAGMA database_list").fetchone()[2]
     count, last = conn.execute("SELECT COUNT(*), COALESCE(MAX(id), 0) FROM readings").fetchone()
     key = (path, count, last, round(nominal_kwh, 4), round(prior_kwh, 4))
-    if _cache["key"] != key:
-        _cache["value"] = learn(trips.load_rows(conn), nominal_kwh, prior_kwh)
-        _cache["key"] = key
-    return _cache["value"]
+    hit = _cache.get(path)
+    if hit is None or hit[0] != key:
+        if len(_cache) >= _CACHE_MAX and path not in _cache:
+            _cache.pop(next(iter(_cache)))
+        hit = (key, learn(trips.load_rows(conn), nominal_kwh, prior_kwh))
+        _cache[path] = hit
+    return hit[1]

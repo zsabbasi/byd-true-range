@@ -45,6 +45,9 @@ function batteryBanner(s) {
 }
 
 function render(s) {
+  // A shared server: until someone has signed in, the only thing to show is the sign-in page (no tabs, no empty dashboard).
+  document.body.classList.toggle("anon", !!(s.multi_user && s.signed_in === false));
+  if (s.multi_user && s.signed_in === false && (location.hash === "" || location.hash === "#/")) location.hash = "#/account";
   batteryBanner(s);
   if (!s.has_data) {
     $("state").textContent = s.signed_in === false ? "Not signed in" : "No data yet";

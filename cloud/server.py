@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import os
 import threading
 import re
 import secrets
@@ -44,6 +45,7 @@ import range_engine
 import pollstatus
 import settings
 import trips
+import users
 
 WEB_DIR = Path(__file__).with_name("web")
 STATIC = {
@@ -68,6 +70,8 @@ STATIC = {
 PUBLIC = {"/manifest.webmanifest", "/sw.js", "/app.css", "/icons/icon-192.png", "/icons/icon-512.png",
           "/icons/icon-maskable-512.png", "/icons/apple-touch-icon.png"}
 COOKIE_MAX_AGE = 365 * 24 * 3600     # the installed app keeps its login
+SESSION_COOKIE = "byd_session"       # shared-server mode: a random token whose hash is in users.sqlite
+SESSION_MAX_AGE = users.SESSION_DAYS * 86400
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 COOKIE_NAME = "byd_token"
 DEFAULT_USABLE_FRACTION = 1.0     # no invented usable share: start from the battery size the owner gave; capacity.py measures it
@@ -103,17 +107,26 @@ def shell_version() -> str:
 
 
 _last_touch = float("-inf")
+_last_touch_by_dir: dict[str, float] = {}
 
 
 def touch_viewer() -> None:
     """Tell the poller someone has the app open (it then refreshes sooner). At most once per 5 s."""
     global _last_touch
     now = time.monotonic()
-    if now - _last_touch < 5:
-        return
-    _last_touch = now
+    if db.dir_override():                                    # shared server: throttle per user, never across users
+        key = str(db.current_dir())
+        if now - _last_touch_by_dir.get(key, float("-inf")) < 5:
+            return
+        if len(_last_touch_by_dir) > 1000:
+            _last_touch_by_dir.clear()
+        _last_touch_by_dir[key] = now
+    else:
+        if now - _last_touch < 5:
+            return
+        _last_touch = now
     try:
-        f = Path(db.DB_PATH).parent / "viewer_active"
+        f = db.current_dir() / "viewer_active"
         f.parent.mkdir(parents=True, exist_ok=True)
         f.touch()
     except OSError:
@@ -122,9 +135,10 @@ def touch_viewer() -> None:
 
 # ----------------------------------------------------------------------------------------------- data ---
 def _connect_ro() -> sqlite3.Connection | None:
-    if not Path(db.DB_PATH).exists():
+    p = db.current_db_path()
+    if not p.exists():
         return None
-    conn = sqlite3.connect(f"file:{Path(db.DB_PATH).as_posix()}?mode=ro", uri=True, timeout=5)
+    conn = sqlite3.connect(f"file:{p.as_posix()}?mode=ro", uri=True, timeout=5)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -268,6 +282,27 @@ def login_rate_limited() -> bool:
         return False
 
 
+_mu_attempts: dict[str, list[float]] = {}
+MU_LIMITS = (("u", 5), ("i", 20), ("all", 120))     # per BYD account, per client address, whole server; each per 10 minutes
+
+
+def multi_rate_limited(uid: str, ip: str) -> bool:
+    """Wrong logins can lock a BYD account, so one account gets 5 tries per 10 minutes, one address 20, the whole server 120."""
+    now = time.monotonic()
+    keys = {"u": f"u:{uid}", "i": f"i:{ip}", "all": "all"}
+    with _login_lock:
+        if len(_mu_attempts) > 20000:
+            _mu_attempts.clear()
+        for kind, limit in MU_LIMITS:
+            lst = _mu_attempts.setdefault(keys[kind], [])
+            lst[:] = [t for t in lst if now - t < LOGIN_WINDOW_S]
+            if len(lst) >= limit:
+                return True
+        for kind, _ in MU_LIMITS:
+            _mu_attempts[keys[kind]].append(now)
+        return False
+
+
 def _byd_login(creds: dict, timeout: float = 25.0) -> list[dict]:
     """One login attempt against BYD. Returns [{"model", "vin_tail"}]. Raises pyBYD's exceptions."""
     import asyncio
@@ -285,6 +320,7 @@ def _byd_login(creds: dict, timeout: float = 25.0) -> list[dict]:
     return asyncio.run(asyncio.wait_for(go(), timeout))
 
 
+_users_lock = threading.Lock()
 do_login = _byd_login            # a module attribute so tests can replace it; the real one talks only to BYD
 
 
@@ -296,6 +332,11 @@ class Handler(BaseHTTPRequestHandler):
     token: str | None = None
     capacity_kwh = range_engine.DEFAULT_USABLE_KWH
     usable_fraction = DEFAULT_USABLE_FRACTION
+    multi_user = False     # shared server: every person signs in with their own BYD account (--multi-user)
+    max_users = 10
+    invite_code: str | None = None
+    assume_https = False   # the operator says a proxy terminates TLS but does not send X-Forwarded-Proto
+    uid: str | None = None
     location = True        # False: never send coordinates or routes (--no-location)
     map_tiles = True       # False: never load map images from OpenStreetMap (--no-map-tiles)
 
@@ -317,8 +358,48 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _json(self, obj, code=200):
-        self._send(code, json.dumps(obj, separators=(",", ":")).encode(), "application/json")
+    def _json(self, obj, code=200, extra: dict | None = None):
+        self._send(code, json.dumps(obj, separators=(",", ":")).encode(), "application/json", extra)
+
+    def cap_kwh(self) -> float:
+        """Nominal battery size: per user on a shared server (their own setting), else the one chosen at start / saved."""
+        return settings.load()["battery_kwh"] if self.multi_user else self.capacity_kwh
+
+    def _cookie_value(self, name: str) -> str | None:
+        raw = self.headers.get("Cookie")
+        if not raw:
+            return None
+        try:
+            m = cookies.SimpleCookie(raw).get(name)
+        except cookies.CookieError:
+            return None
+        return m.value if m else None
+
+    def _client_ip(self) -> str:
+        ip = self.client_address[0]
+        if is_local_client(ip):                       # behind a proxy on this machine: its last X-Forwarded-For entry is the client
+            xff = self.headers.get("X-Forwarded-For")
+            if xff:
+                return xff.split(",")[-1].strip()[:64]
+        return ip
+
+    def _secure_transport(self) -> bool:
+        """A password must not cross plain HTTP: HTTPS (as reported by the proxy in front) or this very machine."""
+        if self.assume_https or self.headers.get("X-Forwarded-Proto", "").lower() == "https":
+            return True
+        return self._is_local()
+
+    def _session_cookie(self, token: str, max_age: int) -> str:
+        secure = "; Secure" if (self.assume_https or self.headers.get("X-Forwarded-Proto", "").lower() == "https") else ""
+        return f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}"
+
+    def _serve(self, fn):
+        """Shared server: find the user from the session cookie and run the handler inside THEIR data folder (and only theirs)."""
+        self.uid = users.lookup_session(self._cookie_value(SESSION_COOKIE)) if self.multi_user else None
+        if self.uid is None:
+            return fn()
+        with db.use_dir(users.user_dir(self.uid)):
+            return fn()
 
     def _text(self, code, msg):
         self._send(code, msg.encode(), "text/plain; charset=utf-8")
@@ -336,9 +417,14 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- routing --
     def do_GET(self):  # noqa: N802
+        return self._serve(self._do_get)
+
+    def _do_get(self):
         url = urlsplit(self.path)
 
-        if self.token is None:
+        if self.multi_user:
+            pass                      # public pages only; every data endpoint below needs a session
+        elif self.token is None:
             # loopback-only mode: defeat DNS rebinding
             if _host_only(self.headers.get("Host", "")) not in LOOPBACK_HOSTS:
                 return self._text(403, "Forbidden host")
@@ -366,16 +452,21 @@ class Handler(BaseHTTPRequestHandler):
                 body = body.replace(b"__VERSION__", shell_version().encode())
                 return self._send(200, body, ctype, {"Service-Worker-Allowed": "/"})
             return self._send(200, body, ctype)
+        if self.multi_user and self.uid is None and path.startswith("/api/") and path != "/api/account":
+            if path == "/api/status":          # not signed in: the page shows the sign-in, nobody else's data
+                return self._json({"has_data": False, "signed_in": False, "multi_user": True,
+                                   "server_time": dt.datetime.now(dt.timezone.utc).isoformat()})
+            return self._json({"error": "login-required"}, 401)
         if path == "/api/status":
             touch_viewer()
             conn = _connect_ro()
             try:
-                data = build_status(conn, capacity_kwh=self.capacity_kwh, usable_fraction=self.usable_fraction,
+                data = build_status(conn, capacity_kwh=self.cap_kwh(), usable_fraction=self.usable_fraction,
                                     range_mode=settings.load()["range_mode"])
             finally:
                 if conn:
                     conn.close()                 # close BEFORE replying: the client may delete the file the moment it hears back
-            data["battery_kwh"] = self.capacity_kwh
+            data["battery_kwh"] = self.cap_kwh()
             data["battery_set"] = settings.load()["battery_set"]
             data["signed_in"] = byd_config.credentials_present()
             data["poller_state"] = pollstatus.read()["state"]
@@ -400,12 +491,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _trips(self, path: str):
         """Trip history. Deliberately does NOT touch the viewer flag: browsing history must not wake the car."""
-        usable = self.capacity_kwh * self.usable_fraction
+        usable = self.cap_kwh() * self.usable_fraction
         conn = _connect_ro()
         try:
             rows = trips.load_rows(conn) if conn else []
             if conn:
-                usable = capacity.learn_from_db(conn, self.capacity_kwh, usable)["usable_kwh"]
+                usable = capacity.learn_from_db(conn, self.cap_kwh(), usable)["usable_kwh"]
         finally:
             if conn:
                 conn.close()
@@ -426,12 +517,12 @@ class Handler(BaseHTTPRequestHandler):
     def _charging(self, path: str):
         """Charging sessions. Does not touch the viewer flag, and carries no coordinates."""
         cfg = settings.load()
-        usable = self.capacity_kwh * self.usable_fraction
+        usable = self.cap_kwh() * self.usable_fraction
         conn = _connect_ro()
         try:
             rows = trips.load_rows(conn) if conn else []
             if conn:
-                usable = capacity.learn_from_db(conn, self.capacity_kwh, usable)["usable_kwh"]
+                usable = capacity.learn_from_db(conn, self.cap_kwh(), usable)["usable_kwh"]
         finally:
             if conn:
                 conn.close()
@@ -458,12 +549,12 @@ class Handler(BaseHTTPRequestHandler):
         """Learned usable capacity. Does not touch the viewer flag: reading it must not wake the car."""
         conn = _connect_ro()
         try:
-            prior = self.capacity_kwh * self.usable_fraction
+            prior = self.cap_kwh() * self.usable_fraction
             if conn is None:
-                post = capacity.posterior([], prior, self.capacity_kwh)
+                post = capacity.posterior([], prior, self.cap_kwh())
                 post["samples"] = []
             else:
-                post = dict(capacity.learn_from_db(conn, self.capacity_kwh, prior))
+                post = dict(capacity.learn_from_db(conn, self.cap_kwh(), prior))
         finally:
             if conn:
                 conn.close()
@@ -494,8 +585,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def _account(self):
         """Who is signed in (masked), how it is stored, and what the poller says. Never a password."""
+        if self.multi_user and self.uid is None:          # not signed in on a shared server: only what the sign-in form needs
+            return self._json({
+                "signed_in": False, "multi_user": True, "local": True, "user": None, "region": None, "country": None, "store": None,
+                "poller": {"state": "unknown"}, "regions": [{"id": k, "label": v} for k, v in byd_config.REGIONS.items()],
+                "confirmed": byd_config.CONFIRMED, "invite_required": bool(self.invite_code),
+                "full": users.count() >= self.max_users,
+                "battery": {"kwh": settings.DEFAULT_BATTERY_KWH, "set": False,
+                            "options": [{"id": "standard", "label": "Standard Range", "kwh": 49.92},
+                                        {"id": "extended", "label": "Extended Range", "kwh": 60.48}]},
+            })
         creds = byd_config.load_credentials()
         return self._json({
+            "multi_user": self.multi_user,
             "signed_in": creds is not None,
             "user": mask_username(creds["username"]) if creds else None,
             "region": byd_config.region_of(creds["base_url"]) if creds else None,
@@ -507,7 +609,7 @@ class Handler(BaseHTTPRequestHandler):
             "host": _host_only(self.headers.get("Host", ""))[:80],
             "regions": [{"id": k, "label": v} for k, v in byd_config.REGIONS.items()],
             "confirmed": byd_config.CONFIRMED,
-            "battery": {"kwh": self.capacity_kwh, "set": settings.load()["battery_set"],
+            "battery": {"kwh": self.cap_kwh(), "set": settings.load()["battery_set"],
                         "options": [{"id": "standard", "label": "Standard Range", "kwh": 49.92},
                                     {"id": "extended", "label": "Extended Range", "kwh": 60.48}]},
         })
@@ -529,13 +631,19 @@ class Handler(BaseHTTPRequestHandler):
         return b"", "too-large"
 
     def do_POST(self):  # noqa: N802
+        return self._serve(self._do_post)
+
+    def _do_post(self):
         body, problem = self._take_body()
         path = urlsplit(self.path).path
         if path not in ("/api/login", "/api/logout", "/api/settings"):
             return self._text(405, "Read-only")
-        if self.token is not None and not self._cookie_ok():
+        if self.multi_user:
+            if path != "/api/login" and self.uid is None:
+                return self._json({"error": "unauthorized", "message": "Sign in first."}, 401)
+        elif self.token is not None and not self._cookie_ok():
             return self._json({"error": "unauthorized"}, 401)
-        if path == "/api/login" and not self._is_local():     # signing in is local-only; signing out and settings are not
+        if path == "/api/login" and not self.multi_user and not self._is_local():     # signing in is local-only; signing out and settings are not
             return self._json({"error": "local-only", "message": "Sign in on the computer that runs the app (or through an SSH "
                                "tunnel to its localhost). Your password is never accepted over a tunnel, proxy or network."}, 403)
         # Login CSRF: a web page in your browser must not be able to sign this app in to someone else's account.
@@ -557,7 +665,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             return self._json({"error": "invalid", "message": "Expected an object."}, 400)
         if path == "/api/logout":
-            return self._logout()
+            return self._logout(data)
         if path == "/api/settings":
             return self._settings(data)
         return self._login(data)
@@ -570,10 +678,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "invalid", "field": "battery_kwh", "message": str(e)}, 400)
         except OSError:
             return self._json({"error": "write", "message": "Could not save the setting on the server."}, 500)
-        type(self).capacity_kwh = kwh            # takes effect at once for every page; the poller re-reads settings itself
+        if not self.multi_user:                  # a shared server keeps the size per user, in their own folder
+            type(self).capacity_kwh = kwh        # takes effect at once for every page; the poller re-reads settings itself
         return self._json({"ok": True, "battery_kwh": kwh})
 
-    def _logout(self):
+    def _logout(self, data: dict | None = None):
+        if self.multi_user:
+            # "Sign out" ends this device's session only (tracking continues). "forget": delete everything and stop tracking.
+            forget = isinstance(data, dict) and data.get("forget") is True
+            users.end_session(self._cookie_value(SESSION_COOKIE))
+            if forget and self.uid:
+                users.request_delete(self.uid)               # the supervisor stops their poller and wipes their folder
+            return self._json({"ok": True, "forgotten": bool(forget)}, extra={"Set-Cookie": self._session_cookie("", 0)})
         credstore.delete()
         pollstatus.write("waiting-for-signin", "Signed out. Sign in to start reading your car.")
         return self._json({"ok": True})
@@ -596,9 +712,31 @@ class Handler(BaseHTTPRequestHandler):
             tz = "UTC"
         if data.get("acknowledged") is not True:
             return bad("acknowledged", "Confirm that this is a dedicated sub-account, not your primary BYD login.")
-        if login_rate_limited():
+        uid = None
+        if self.multi_user:
+            if not self._secure_transport():
+                return self._json({"error": "insecure", "message": "Sign in needs a secure (https) connection, so your password is "
+                                   "not sent in the clear. Open this server's https address."}, 403)
+            if data.get("shared_risk_ack") is not True:
+                return bad("shared_risk_ack", "Confirm that you understand the person running this server can see your BYD login "
+                           "and your car's data.")
+            uid = users.user_id(username, region)
+            limited = multi_rate_limited(uid, self._client_ip())
+        else:
+            limited = login_rate_limited()
+        if limited:
             return self._json({"error": "rate-limit", "message": "Too many sign-in attempts. Wait 10 minutes: repeated wrong logins "
                                "can lock a BYD account."}, 429)
+        if uid is not None:
+            st = users.state(uid)
+            if st == "removing":
+                return self._json({"error": "removing", "message": "Your earlier data is still being removed. Try again in a minute."}, 409)
+            if st == "none":
+                if self.invite_code and not hmac.compare_digest(str(data.get("invite") or ""), self.invite_code):
+                    return self._json({"error": "invite", "field": "invite", "message": "This server needs an invite code. Ask the "
+                                       "person who runs it."}, 403)
+                if users.count() >= self.max_users:
+                    return self._json({"error": "full", "message": "This server has reached its limit of users."}, 403)
         creds = {"username": username.strip(), "password": password, "base_url": byd_config.base_url_for(region),
                  "country_code": country.upper(), "language": "en", "time_zone": tz}
         try:
@@ -614,6 +752,8 @@ class Handler(BaseHTTPRequestHandler):
                                    "talk to BYD. Install the locked requirements: pip install --require-hashes -r requirements.txt"}, 500)
             return self._json({"error": "unreachable", "message": f"Could not reach BYD ({type(e).__name__}). Check this "
                                "computer's internet connection and the region."}, 502)
+        if uid is not None:
+            return self._login_shared(uid, creds, vehicles)
         try:
             protection = credstore.save(creds)
         except (OSError, ValueError) as e:
@@ -627,6 +767,28 @@ class Handler(BaseHTTPRequestHandler):
         pollstatus.write("starting", "Signed in. Starting to read your car.")
         return self._json({"ok": True, "vehicles": vehicles, "protection": protection,
                            "key_source": credstore.describe()["key_source"]})
+
+    def _login_shared(self, uid: str, creds: dict, vehicles: list):
+        """BYD accepted this person: give them their own folder, store their login there (encrypted), start a session."""
+        was_new = users.state(uid) == "none"
+        with _users_lock:
+            if was_new and users.count() >= self.max_users:
+                creds.clear()
+                return self._json({"error": "full", "message": "This server has reached its limit of users."}, 403)
+            users.add(uid)
+        try:
+            with db.use_dir(users.user_dir(uid)):
+                credstore.save(creds)
+                pollstatus.write("starting", "Signed in. Starting to read your car.")
+        except (OSError, ValueError):
+            if was_new:
+                users.purge(uid)
+            return self._json({"error": "store", "message": "BYD accepted the sign-in, but this server could not store it securely. "
+                               "Nothing was saved. Tell the person who runs the server."}, 500)
+        finally:
+            creds.clear()
+        token = users.create_session(uid)
+        return self._json({"ok": True, "vehicles": vehicles}, extra={"Set-Cookie": self._session_cookie(token, SESSION_MAX_AGE)})
 
     def _read_only(self):
         self._take_body()                       # read it first, so the reply is not lost to a connection reset
@@ -654,10 +816,14 @@ def load_or_create_token(path: Path) -> str:
 
 
 def make_server(host: str, port: int, *, token: str | None, capacity_kwh: float, usable_fraction: float,
-                location: bool = True, map_tiles: bool = True):
+                location: bool = True, map_tiles: bool = True, multi_user: bool = False, max_users: int = 10,
+                invite_code: str | None = None, assume_https: bool = False):
+    if multi_user and token is not None:
+        raise ValueError("--multi-user has its own sign-in; do not combine it with an access token")
     handler = type("BoundHandler", (Handler,), {
         "token": token, "capacity_kwh": capacity_kwh, "usable_fraction": usable_fraction,
-        "location": location, "map_tiles": map_tiles,
+        "location": location, "map_tiles": map_tiles, "multi_user": multi_user, "max_users": max_users,
+        "invite_code": invite_code or None, "assume_https": assume_https,
     })
     return ThreadingHTTPServer((host, port), handler)
 
@@ -686,12 +852,36 @@ def main() -> None:
                     help="never send coordinates or routes to the page (trip stats still work)")
     ap.add_argument("--no-map-tiles", action="store_true",
                     help="draw routes on a plain background; never request OpenStreetMap map images")
+    ap.add_argument("--multi-user", action="store_true",
+                    help="SHARED server: every person signs in with their own BYD account and sees only their own car "
+                         "(use run.py, which also starts one poller per user). Put HTTPS in front of it.")
+    ap.add_argument("--max-users", type=int, default=10, help="shared server: how many people may sign up (default 10)")
+    ap.add_argument("--assume-https", action="store_true",
+                    help="shared server: a proxy in front terminates HTTPS but does not send X-Forwarded-Proto")
     a = ap.parse_args()
+    if a.multi_user and a.require_token:
+        ap.error("--multi-user has its own sign-in; do not combine it with --require-token")
 
     exposed = not is_loopback(a.host) or a.require_token
-    token = load_or_create_token(db.DB_PATH.parent / "access_token.txt") if exposed else None
+    token = (load_or_create_token(db.DB_PATH.parent / "access_token.txt")
+             if exposed and not a.multi_user else None)
+    invite = os.environ.get("BYD_APP_INVITE") or None          # an environment variable: never visible in the process list
     srv = make_server(a.host, a.port, token=token, capacity_kwh=a.capacity, usable_fraction=a.usable_fraction,
-                      location=not a.no_location, map_tiles=not a.no_map_tiles and not a.no_location)
+                      location=not a.no_location, map_tiles=not a.no_map_tiles and not a.no_location,
+                      multi_user=a.multi_user, max_users=a.max_users, invite_code=invite, assume_https=a.assume_https)
+    if a.multi_user:
+        print(f"SHARED SERVER on {a.host}:{a.port}: up to {a.max_users} people, each with their own BYD sign-in and their own data.")
+        print("Invite code: " + ("required (BYD_APP_INVITE)" if invite else "none: anyone who can open the page may sign up"))
+        print("Passwords are only accepted over https (X-Forwarded-Proto from your proxy"
+              + (", or --assume-https" if a.assume_https else "") + ") or from this machine.")
+        print("Ctrl+C to stop.\n")
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            print("\nStopped.")
+        finally:
+            srv.server_close()
+        return
 
     print(f"BYD range app on {a.host}:{a.port}   (database: {db.DB_PATH})")
     print("Trip routes: " + ("OFF (--no-location)" if a.no_location else

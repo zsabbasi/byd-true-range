@@ -4,8 +4,10 @@ One row per successful poll. All data stays in  data/history.sqlite  on this mac
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import sqlite3
+import threading
 from pathlib import Path
 
 def data_dir() -> Path:
@@ -16,6 +18,34 @@ def data_dir() -> Path:
 
 
 DB_PATH = data_dir() / "history.sqlite"
+
+# Shared-server mode: each web request works on ONE user's folder. The folder is held per thread (one thread per request), so two
+# users' requests can never see each other's. Outside a request (the poller, tests) nothing is overridden.
+_tls = threading.local()
+
+
+def dir_override() -> Path | None:
+    return getattr(_tls, "dir", None)
+
+
+def current_dir() -> Path:
+    """The data folder of the user being served, else the normal one next to DB_PATH."""
+    return dir_override() or Path(DB_PATH).parent
+
+
+def current_db_path() -> Path:
+    o = dir_override()
+    return o / "history.sqlite" if o else Path(DB_PATH)
+
+
+@contextlib.contextmanager
+def use_dir(path):
+    prev = dir_override()
+    _tls.dir = Path(path)
+    try:
+        yield
+    finally:
+        _tls.dir = prev
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS readings (

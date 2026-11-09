@@ -113,3 +113,4 @@ button.primary:disabled{opacity:.4;cursor:not-allowed}
 .errmsg{color:var(--bad)}.okmsg{color:var(--ok)}
 .pill:disabled{opacity:.45;cursor:not-allowed}
 .stale a, #batnote a { color: #93c5fd; }
+body.anon .tabs, body.anon .footlink { display: none; }
