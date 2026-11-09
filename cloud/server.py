@@ -342,6 +342,19 @@ _users_lock = threading.Lock()
 do_login = _byd_login            # a module attribute so tests can replace it; the real one talks only to BYD
 
 
+def store_problem(e: Exception) -> str:
+    """A plain reason for a failed secure save. Used by both the single-owner and the shared sign-in."""
+    if isinstance(e, PermissionError):
+        return "the encryption key file is readable by other users (it must be chmod 600, owned by the service user)"
+    if isinstance(e, FileNotFoundError):
+        return "the encryption key is missing (set BYD_APP_KEY_FILE, or LoadCredential= in the service, see deploy/README.md)"
+    if isinstance(e, ValueError) and "too short" in str(e):
+        return "the encryption key file is too short (it needs 32 random bytes or more)"
+    if isinstance(e, OSError):
+        return f"the data folder could not be written ({type(e).__name__}: check the folder exists and the service user owns it)"
+    return "the encryption key could not be used"
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "BYDRange"
     sys_version = ""
@@ -809,11 +822,14 @@ class Handler(BaseHTTPRequestHandler):
             with db.use_dir(users.user_dir(uid)):
                 credstore.save(creds)
                 pollstatus.write("starting", "Signed in. Starting to read your car.")
-        except (OSError, ValueError):
+        except (OSError, ValueError) as e:
             if was_new:
                 users.purge(uid)
-            return self._json({"error": "store", "message": "BYD accepted the sign-in, but this server could not store it securely. "
-                               "Nothing was saved. Tell the person who runs the server."}, 500)
+            why = store_problem(e)
+            # The operator's log gets the exact cause (no password, no account name); the person gets the plain reason.
+            print(f"could not store a sign-in: {type(e).__name__}: {e} -> {why}", flush=True)
+            return self._json({"error": "store", "message": f"BYD accepted the sign-in, but this server could not store it securely: "
+                               f"{why}. Nothing was saved. Tell the person who runs the server."}, 500)
         finally:
             creds.clear()
         token = users.create_session(uid)
