@@ -53,7 +53,7 @@ class Settings(unittest.TestCase):
         ex = settings.LEGACY_FILE.with_name("settings.example.json")
         s = settings.load(ex)
         self.assertEqual(set(s), {"battery_kwh", "usable_fraction", "range_mode", "tariff_per_kwh", "currency",
-                                  "charging_loss_pct", "battery_set"})
+                                  "charging_loss_pct", "battery_set", "parked_interval_min"})
         self.assertEqual(s["battery_kwh"], 49.92)
 
 

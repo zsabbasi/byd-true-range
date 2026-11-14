@@ -74,7 +74,8 @@ CREATE INDEX IF NOT EXISTS idx_readings_ts ON readings(ts);
 
 
 NEW_COLUMNS = {"r50_rate": "REAL", "r50_kwh": "REAL", "r50_air_pct": "REAL",
-               "gear": "TEXT", "vehicle_state": "TEXT"}
+               "gear": "TEXT", "vehicle_state": "TEXT",
+               "tyre_lf": "REAL", "tyre_rf": "REAL", "tyre_lr": "REAL", "tyre_rr": "REAL", "tyre_unit": "TEXT"}   # tyre pressures as BYD reports them
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -97,7 +98,8 @@ def connect() -> sqlite3.Connection:
 def insert_reading(conn: sqlite3.Connection, row: dict) -> None:
     cols = ("ts", "car_ts", "vin_tail", "soc", "odometer_km", "byd_range_km", "speed_kmh",
             "power_w", "charging_state", "recent_50km", "r50_rate", "r50_kwh", "r50_air_pct",
-            "lat", "lon", "is_driving", "gear", "vehicle_state")
+            "lat", "lon", "is_driving", "gear", "vehicle_state",
+            "tyre_lf", "tyre_rf", "tyre_lr", "tyre_rr", "tyre_unit")
     conn.execute(
         f"INSERT INTO readings ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
         tuple(row.get(c) for c in cols),

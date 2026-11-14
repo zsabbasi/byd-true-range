@@ -28,6 +28,8 @@ car -> BYD cloud -> pyBYD (one library, audited, hash-locked)
 - **Whole-percent battery data** is why the answer is a band with a trust figure, not a single number.
 - **Battery size is your choice.** BYD's cloud does not say which pack you have. The app asks (Standard Range 49.92 kWh, Extended Range 60.48 kWh, or another size) and, until you choose, says it is assuming Standard Range. The Battery tab then measures the real usable energy from your drives.
 - **Read-only.** No control commands exist in the code. Credentials only ever go to BYD, over HTTPS.
+- **Car mode.** On a car's screen the app recognises it and refreshes everything live, keeps the screen on, and fits the Now page to one landscape screen with no scrolling: range with the screen's own GPS speed beside it, tyres, heading and the last 20 minutes of battery power. It does not work around the car's own limits (the head unit locks its browser while driving).
+- **Parked checks you can change.** The parked car is checked every 15 minutes by default; each person can pick 2 to 120 minutes on the Account page, and the Battery tab shows how much the battery loses while parked.
 - **Two ways to run it.** *Your own copy* (default): sign-in is local-only. The password is typed on the computer that runs the app (or through an SSH tunnel to it), never over a tunnel, proxy or the network. *A shared server* (`--multi-user`): for people who cannot self-host, each person signs in on the page with their own BYD account and sees only their own car; the host then holds their logins, which is stated on the page. Either way the login is stored AES-256-GCM encrypted with the key outside the data folder, and there is no credentials file.
 
 ## Compatibility: what has actually been tested

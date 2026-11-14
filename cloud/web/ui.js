@@ -64,6 +64,7 @@
   const timers = {};
   function refreshLater(key, ms, hashPrefix, fn) {
     clearTimeout(timers[key]);
+    if (window.CAR && window.CAR.on) ms = Math.min(ms, 10000);      // car mode: every page stays live
     const run = () => {
       if (!location.hash.startsWith(hashPrefix)) return;
       if (document.hidden) { timers[key] = setTimeout(run, 5000); return; }

@@ -206,6 +206,55 @@
     return box;
   }
 
+  const PARKED_HELP = "How often the app checks the car while it is parked and you are not looking at the app. A shorter time catches short trips that would otherwise be missed, but it wakes the car's system more often and may use more of the 12 V battery. While the car is driving the app checks about every 30 seconds, and while the app is open on a screen about every 2 minutes. 15 minutes is the default; 5 minutes catches more short trips. The Battery tab shows how much the battery loses while parked.";
+
+  // How often the parked car is checked: per person (on a shared server each person has their own), applied by the poller at its next check.
+  function buildParked(a) {
+    const p = a.parked;
+    if (!p) return el("div");
+    const box = el("section", "hero");
+    box.appendChild(el("div", "label", "Parked checks"));
+    const head = el("div", "note", "Checks the parked car every " + p.min + " minutes" + (p.custom ? ". " : " (the default). "));
+    const hi = window.UI.info(PARKED_HELP, "About parked checks");
+    head.appendChild(hi.btn);
+    box.appendChild(head);
+    box.appendChild(hi.tip);
+    const sel = el("select"); sel.name = "parked";
+    const opts = p.options.slice();
+    if (!opts.includes(p.min)) opts.push(p.min);
+    opts.sort((x, y) => x - y);
+    for (const m of opts) {
+      const o = el("option", null, m + " minutes" + (m === p.default ? " (default)" : ""));
+      o.value = String(m);
+      sel.appendChild(o);
+    }
+    sel.value = String(p.min);
+    const save = el("button", "primary", "Save"); save.type = "button"; save.disabled = true;
+    const msg = el("div", "formmsg"); msg.setAttribute("role", "status"); msg.setAttribute("aria-live", "polite");
+    sel.addEventListener("change", () => { save.disabled = Number(sel.value) === p.min; });
+    save.addEventListener("click", async () => {
+      const v = Number(sel.value);
+      save.disabled = true;
+      msg.className = "formmsg"; msg.textContent = "Saving…";
+      let r;
+      try { r = await postJSON("/api/settings", { parked_interval_min: v }, 15000); } catch (e) { r = { status: 0, data: { message: "No answer from the app." } }; }
+      if (r.status === 200 && r.data && r.data.ok) {
+        msg.className = "formmsg okmsg";
+        msg.textContent = "Saved: every " + r.data.parked_interval_min + " minutes. The poller uses it from its next check.";
+        $("view-account").dataset.built = "";
+        setTimeout(loadAccount, 1200);
+      } else {
+        msg.className = "formmsg errmsg";
+        msg.textContent = (r.data && r.data.message) || "Could not save (" + (r.status || "no answer") + ").";
+        save.disabled = false;
+      }
+    });
+    box.appendChild(field("Check every", sel));
+    box.appendChild(save);
+    box.appendChild(msg);
+    return box;
+  }
+
   function buildForm(a, onDone) {
     const multi = !!a.multi_user;                    // a shared server: people sign in from their own phone with their own BYD account
     const form = el("form", "signin");
@@ -410,6 +459,7 @@
       const st = el("div"); st.id = "acct-status";
       box.appendChild(st);
       if (a.signed_in || !a.multi_user) box.appendChild(buildBattery(a));     // anonymous visitors on a shared server choose it after signing in
+      if (a.signed_in || !a.multi_user) box.appendChild(buildParked(a));
       if (!(a.multi_user && !a.signed_in)) box.appendChild(el("h2", null, a.signed_in ? "Replace the sign-in" : "Sign in to BYD"));
       box.appendChild(buildForm(a, () => { box.dataset.built = ""; location.hash = "#/"; }));
       box.dataset.built = "1";

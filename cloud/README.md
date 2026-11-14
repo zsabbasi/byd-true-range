@@ -238,6 +238,27 @@ tunnel from your own computer (`ssh -L 8765:localhost:8765 you@server`, then ope
 - **Back up** `data\history.sqlite` if you value the history. It is gitignored.
 - **Standard Range car?** Set `battery_kwh` in `settings.json` (see above).
 
+## Parked checks (how often the parked car is looked at)
+
+The Account page has a **Parked checks** card: choose how often the app checks the car while it is parked and nobody is looking at the app (2, 3, 5, 10, 15, 30 or 60 minutes; the file accepts any whole number
+from 2 to 120). It is per person (on a shared server each person has their own), and the poller reads it at every check, so a change applies at the next one without a restart. The default is **15 minutes**; 5 catches more short trips. A shorter interval catches short trips that would otherwise fall between two checks ("unrecorded drives") but wakes the car's system more often and may use more of the
+12 V battery. Charging is checked every 5 minutes whatever the setting.
+
+## Parked battery drain (the Battery tab)
+
+The **Parked battery drain** card shows how much the displayed battery percentage falls while the car sits parked and unplugged, in percent per day, from readings the app already stored. Only stretches of 2 hours or more count (the percent is
+a whole number, so a one-percent fall over a few hours says almost nothing), and nothing is shown until there are 6 hours of parked time in the last 14 days. It also says how many readings it had per parked hour, so you can
+compare before and after changing the parked interval. It cannot see the 12 V battery, and it cannot tell BYD's own parked drain from anything the checks cause. Measured once by hand on the owner's car: a 10-hour night lost no visible battery.
+
+## Car mode (on the car's screen)
+
+The app recognises a head unit (a desktop-style Linux user agent on an ARM platform with a touch screen: the signature of the one unit seen so far; a normal Android phone does not match) and switches to **car mode**: the status
+refreshes every 3 seconds (20 normally, 5 while driving), the chart every 15 seconds, every other page at least every 10 seconds; the screen is kept awake where the browser allows it; and the layout is wider and larger (the installed app
+on the unit lays out at 980 px). The footer button **Car mode: auto / on / off** overrides the detection (the page reloads), and `?car=1`, `?car=0` or `?car=auto` sets it once. Nothing is sent anywhere. Note what it is not: the page can
+only refresh as fast as the poller gets new readings from BYD (about every 30 seconds while the car is on), and the head unit's own browser lock while driving is not something this works around.
+
+**Car layout** (car mode, Now page): everything fits one landscape screen with no scrolling. The GPS speed sits on the right of the range, then one row of tiles (battery, BYD range, consumption, tyres, heading) and the battery power chart of the last 20 minutes (the same +/- bars as the Trips tab) filling the rest. Speed and heading come from the screen's own GPS, computed on the screen, never sent anywhere or stored; tap Heading to show the position (hidden by default). GPS starts by itself only where the permission is already granted, otherwise you tap "Start GPS". Power and tyre pressures are BYD's readings with their age, dimmed when older than 90 s (BYD reports a spot value about every 30 s). No accelerometer is used: the unit's gives a fixed value, and it cannot give speed anyway. The range calculation is unchanged. Tyre pressures are recorded with every reading; `/api/status` carries `power` (with a 20-minute `trend`) and `tyres`. The Battery page also shows the range on a full battery (`full_range` in `/api/battery`), from the same engine at 100%.
+
 ## Files
 | File | What |
 |---|---|

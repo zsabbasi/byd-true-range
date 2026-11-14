@@ -38,7 +38,7 @@ This is a **shared test server** run by someone you know. To keep reading your c
 ## What to expect
 
 - The first readings appear within a minute or two. Range figures start from BYD's own measured consumption and become **your own** after about 50 km of driving the app has watched. Early numbers are rough, and it shows a **band**, not one number: trust the band.
-- The app reads your car every 30 seconds while you drive and about every 15 minutes while parked. Reading can wake the car's system a little, like opening the BYD app does.
+- The app reads your car every 30 seconds while you drive and about every 15 minutes while parked (you can change that on the Account page: shorter catches more short trips but wakes the car more). Reading can wake the car's system a little, like opening the BYD app does.
 - Never rely on it as your only range check. Keep a reserve.
 
 ## If something goes wrong

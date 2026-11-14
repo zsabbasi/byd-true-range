@@ -42,6 +42,7 @@ import byd_config
 import capacity
 import charging
 import credstore
+import drain
 import range_engine
 import pollstatus
 import settings
@@ -59,6 +60,8 @@ STATIC = {
     "/ui.js": ("ui.js", "application/javascript; charset=utf-8"),
     "/account.js": ("account.js", "application/javascript; charset=utf-8"),
     "/pwa.js": ("pwa.js", "application/javascript; charset=utf-8"),
+    "/car.js": ("car.js", "application/javascript; charset=utf-8"),
+    "/carlive.js": ("carlive.js", "application/javascript; charset=utf-8"),
     "/sw.js": ("sw.js", "application/javascript; charset=utf-8"),
     "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
     "/icons/icon-192.png": ("icons/icon-192.png", "image/png"),
@@ -233,6 +236,10 @@ def build_status(conn: sqlite3.Connection | None, *, now: dt.datetime | None = N
             "gear": row["gear"], "charging_state": row["charging_state"],
             "byd_range_km": byd, "byd_consumption": row["r50_rate"], "byd_kwh_50km": row["r50_kwh"],
         },
+        # BYD's instant battery power at the last reading (a spot value, not a live one), with the last 20 minutes of readings (seconds
+        # before the newest one, kW) for a small trend chart. Positive = into the battery.
+        "power": _power(conn, row, r, data_age),
+        "tyres": _tyres(conn, now, r),
         "range": {
             "status": est.status, "basis": est.basis,
             "km": r(est.true_range_km, 0), "low_km": r(est.low_km, 0), "high_km": r(est.high_km, 0),
@@ -250,6 +257,69 @@ def build_status(conn: sqlite3.Connection | None, *, now: dt.datetime | None = N
             "disagree_pct": r((est.parts or {}).get("disagree_pct"), 0),
         },
     }
+
+
+def _power(conn, row, r, age) -> dict:
+    kw = None if row["power_w"] is None else r(row["power_w"] / 1000.0, 1)
+    trend = []
+    try:
+        last = _parse_ts(row["ts"])
+        if last is not None:
+            cutoff = (last - dt.timedelta(minutes=20)).isoformat()
+            for t in conn.execute("SELECT ts, power_w FROM readings WHERE ts >= ? AND power_w IS NOT NULL "
+                                  "AND (charging_state IS NULL OR charging_state != 'CHARGING') ORDER BY id", (cutoff,)).fetchall():
+                ts = _parse_ts(t["ts"])
+                if ts is not None:
+                    trend.append({"s": -r((last - ts).total_seconds(), 0), "kw": r(t["power_w"] / 1000.0, 1)})
+    except sqlite3.Error:
+        pass
+    return {"kw": kw, "age_s": r(age, 0), "trend": trend[-80:]}
+
+
+def _full_range(conn, usable_kwh: float, sd_rel: float, range_mode: str = "policy") -> dict | None:
+    """The range band as if the battery were 100%: the same engine, the same consumption and ceilings as the Now page, only the battery
+    percent is 100. None until there is a reading to take the consumption from. Contains nothing personal."""
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM readings WHERE soc > 0 AND odometer_km > 0 ORDER BY id DESC LIMIT 1").fetchone()
+    if row is None:
+        return None
+    est = range_engine.best_estimate(db.recent_readings(conn), 100, usable_kwh=usable_kwh, byd_kwh_per_100=row["r50_rate"],
+                                     byd_range_km=row["byd_range_km"], odometer_km=row["odometer_km"],
+                                     own_observed_km=db.observed_km(conn), mode=range_mode, cap_uncertainty=sd_rel,
+                                     best_kwh_per_100=db.best_r50(conn))
+    if est.true_range_km is None:
+        return None
+    # Also at YOUR average: the distance-weighted consumption of every trip this app has recorded (trips.totals), on the same usable
+    # capacity. The band is only the capacity's uncertainty: the average itself is what it is, over that many km.
+    own = None
+    try:
+        tot = trips.totals(trips.analyze(trips.load_rows(conn), usable_kwh))
+        avg = tot.get("kwh_per_100")
+        if avg:
+            km = usable_kwh / avg * 100.0
+            own = {"km": round(km), "low_km": round(km * (1 - sd_rel)), "high_km": round(km * (1 + sd_rel)),
+                   "kwh_per_100": avg, "measured_km": round(tot["measured_km"])}
+    except (sqlite3.Error, KeyError, ValueError):
+        own = None
+    return {"km": round(est.true_range_km), "low_km": round(est.low_km), "high_km": round(est.high_km), "trust_pct": est.trust_pct,
+            "kwh_per_100": None if est.consumption_kwh_per_100km is None else round(est.consumption_kwh_per_100km, 1),
+            "usable_kwh": round(usable_kwh, 1), "own_average": own}
+
+
+def _tyres(conn, now, r) -> dict | None:
+    """The latest recorded tyre pressures, or None (no reading carries them yet, or an older database without the columns)."""
+    try:
+        t = conn.execute("SELECT ts, tyre_lf, tyre_rf, tyre_lr, tyre_rr, tyre_unit FROM readings WHERE tyre_lf IS NOT NULL "
+                         "OR tyre_rf IS NOT NULL OR tyre_lr IS NOT NULL OR tyre_rr IS NOT NULL ORDER BY id DESC LIMIT 1").fetchone()
+    except sqlite3.Error:
+        return None
+    if t is None:
+        return None
+    vals = [t[k] for k in ("tyre_lf", "tyre_rf", "tyre_lr", "tyre_rr") if t[k] is not None]
+    ts = _parse_ts(t["ts"])
+    return {"lf": r(t["tyre_lf"], 1), "rf": r(t["tyre_rf"], 1), "lr": r(t["tyre_lr"], 1), "rr": r(t["tyre_rr"], 1),
+            "unit": t["tyre_unit"], "spread": r(max(vals) - min(vals), 1) if len(vals) > 1 else None,
+            "age_s": r(max(0.0, (now - ts).total_seconds()), 0) if ts else None}
 
 
 def build_series(conn: sqlite3.Connection | None, hours: float = 24.0, max_points: int = 240,
@@ -629,8 +699,12 @@ class Handler(BaseHTTPRequestHandler):
             if conn is None:
                 post = capacity.posterior([], prior, self.cap_kwh())
                 post["samples"] = []
+                parked = drain.summary([])
+                full = None
             else:
                 post = dict(capacity.learn_from_db(conn, self.cap_kwh(), prior))
+                parked = drain.for_db(conn)
+                full = _full_range(conn, post["usable_kwh"], post["sd_rel"])
         finally:
             if conn:
                 conn.close()
@@ -641,7 +715,7 @@ class Handler(BaseHTTPRequestHandler):
         battery = {k: (r(v, 2) if isinstance(v, float) else v) for k, v in post.items() if k != "samples"}
         battery["sd_rel_pct"] = r(post["sd_rel"] * 100, 1)
         samples = [{k: v for k, v in s.items() if k != "sd_rel"} for s in post["samples"]]
-        return self._json({"battery": battery, "samples": samples})
+        return self._json({"battery": battery, "samples": samples, "parked_drain": parked, "full_range": full})
 
     # -- account ---------------------------------------------------------------------------------------------------
     def _remote_reason(self) -> str | None:
@@ -688,6 +762,8 @@ class Handler(BaseHTTPRequestHandler):
             "battery": {"kwh": self.cap_kwh(), "set": settings.load()["battery_set"],
                         "options": [{"id": "standard", "label": "Standard Range", "kwh": 49.92},
                                     {"id": "extended", "label": "Extended Range", "kwh": 60.48}]},
+            "parked": {"min": settings.parked_interval_min(), "default": settings.DEFAULT_PARKED_MIN,
+                       "custom": settings.load().get("parked_interval_min") is not None, "options": list(settings.PARKED_OPTIONS)},
         })
 
     def _take_body(self):
@@ -747,16 +823,29 @@ class Handler(BaseHTTPRequestHandler):
         return self._login(data)
 
     def _settings(self, data: dict):
-        """The battery size (the only setting the page can change). Needs the login cookie and the CSRF header, like sign-in."""
+        """The settings the page can change: the battery size and how often the parked car is checked. Needs the login cookie and the
+        CSRF header, like sign-in. Either or both may be sent; each is validated on its own and nothing is saved if any is invalid."""
+        fields = [k for k in ("battery_kwh", "parked_interval_min") if k in data]
+        if not fields:
+            return self._json({"error": "invalid", "field": "battery_kwh", "message": "Nothing to save."}, 400)
+        savers = {"battery_kwh": settings.save_battery, "parked_interval_min": settings.save_parked_interval}
+        # validate everything first (a dry run on a throw-away file), then save, so a bad second value cannot leave a half-saved request
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            for k in fields:
+                try:
+                    savers[k](data[k], Path(d) / "dry.json")
+                except ValueError as e:
+                    return self._json({"error": "invalid", "field": k, "message": str(e)}, 400)
+        out = {"ok": True}
         try:
-            kwh = settings.save_battery(data.get("battery_kwh"))
-        except ValueError as e:
-            return self._json({"error": "invalid", "field": "battery_kwh", "message": str(e)}, 400)
+            for k in fields:
+                out[k] = savers[k](data[k])
         except OSError:
             return self._json({"error": "write", "message": "Could not save the setting on the server."}, 500)
-        if not self.multi_user:                  # a shared server keeps the size per user, in their own folder
-            type(self).capacity_kwh = kwh        # takes effect at once for every page; the poller re-reads settings itself
-        return self._json({"ok": True, "battery_kwh": kwh})
+        if "battery_kwh" in out and not self.multi_user:   # a shared server keeps the size per user, in their own folder
+            type(self).capacity_kwh = out["battery_kwh"]    # takes effect at once for every page; the poller re-reads settings itself
+        return self._json(out)
 
     def _logout(self, data: dict | None = None):
         if self.multi_user:

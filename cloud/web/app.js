@@ -45,6 +45,8 @@ function batteryBanner(s) {
 }
 
 function render(s) {
+  if (window.CARLIVE && window.CARLIVE.onStatus) window.CARLIVE.onStatus(s);       // car mode's live card (carlive.js): the same answer, no extra request
+  renderPowerTrend(s.has_data ? s.power : null);
   // A shared server: until someone has signed in, the only thing to show is the sign-in page (no tabs, no empty dashboard).
   document.body.classList.toggle("anon", !!(s.multi_user && s.signed_in === false));
   if (s.multi_user && s.signed_in === false && (location.hash === "" || location.hash === "#/")) location.hash = "#/account";
@@ -141,6 +143,34 @@ function drawBar(g, byd) {
   $("barwrap").setAttribute("aria-label", "Range band " + g.low_km + " to " + g.high_km + " km, estimate " + g.km + " km" + (byd ? ", BYD says " + byd + " km" : ""));
 }
 
+// Battery power over the last 20 minutes, from BYD's spot readings (about every 30 s while driving). Up (green) is regen, down is drawn.
+function renderPowerTrend(p) {
+  const sec = $("ptsec"), svg = $("ptrend");
+  const tr = p && p.trend && p.trend.length > 1 ? p.trend : null;
+  sec.hidden = !tr;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  if (!tr) return;
+  const ns = "http://www.w3.org/2000/svg";
+  const span = Math.max(60, -tr[0].s);
+  const vMax = Math.max(20, ...tr.map((q) => Math.abs(q.kw)));
+  const zero = document.createElementNS(ns, "line");
+  zero.setAttribute("x1", "0"); zero.setAttribute("x2", "300"); zero.setAttribute("y1", "40"); zero.setAttribute("y2", "40");
+  zero.setAttribute("stroke", "currentColor"); zero.setAttribute("opacity", "0.4"); zero.setAttribute("vector-effect", "non-scaling-stroke");
+  svg.appendChild(zero);
+  tr.forEach((q, i) => {
+    const nextS = i + 1 < tr.length ? tr[i + 1].s : 0;
+    const w = Math.max(1.2, (Math.min(nextS - q.s, 90) / span) * 296 - 0.6);
+    const h = Math.max(0.8, (Math.abs(q.kw) / vMax) * 37);
+    const r = document.createElementNS(ns, "rect");
+    r.setAttribute("x", (((q.s + span) / span) * 296 + 2).toFixed(1));
+    r.setAttribute("width", w.toFixed(1)); r.setAttribute("height", h.toFixed(1));
+    r.setAttribute("y", (q.kw >= 0 ? 40 - h : 40).toFixed(1));
+    r.setAttribute("fill", q.kw >= 0 ? "#16a34a" : "#d97706");
+    svg.appendChild(r);
+  });
+  $("ptnote").textContent = "Scale ±" + vMax.toFixed(0) + " kW. Spot readings: short bursts can fall between them.";
+}
+
 function renderSeries(rows) {
   const svg = $("spark");
   while (svg.firstChild) svg.removeChild(svg.firstChild);
@@ -197,8 +227,11 @@ function pulse() {
   d.classList.add("pulse");
 }
 
+// Car mode (car.js): the status refreshes every 3 s, the chart every 15 s. Elsewhere: 5 s while driving, 20 s otherwise.
+const carMs = (normal, car) => (window.CAR ? window.CAR.ms(normal, car) : normal);
+
 async function tick() {
-  let next = SLOW_MS;
+  let next = carMs(SLOW_MS, 3000);
   if (!onNow()) { timer = setTimeout(tick, 3000); return; }
   if (document.hidden) {           // don't keep the car awake from a background tab / pocket
     timer = setTimeout(tick, 5000);
@@ -210,7 +243,7 @@ async function tick() {
     lastOk = Date.now();
     lastAge = s.has_data ? (s.reading.data_age_s !== null && s.reading.data_age_s !== undefined ? s.reading.data_age_s : s.reading.age_s) : null;
     pulse();
-    if (s.has_data && s.reading.is_driving) next = FAST_MS;
+    if (s.has_data && s.reading.is_driving) next = carMs(FAST_MS, 3000);
   } catch (e) {
     next = 5000;                     // after a failure retry soon, not after a long wait
     $("state").textContent = "Connection lost, retrying\u2026";
@@ -233,7 +266,7 @@ setInterval(() => {
 }, 15000);
 async function seriesTick() {
   try { renderSeries(await getJSON("/api/series")); } catch (e) { /* keep last chart */ }
-  setTimeout(seriesTick, 60000);
+  setTimeout(seriesTick, carMs(60000, 15000));
 }
 tick();
 seriesTick();

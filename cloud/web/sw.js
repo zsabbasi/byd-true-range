@@ -3,7 +3,7 @@
 // fetched live, so nothing about your car is ever stored by the worker). __VERSION__ is replaced by the server with a hash of the
 // shell files, so a changed file produces a new cache and the old one is deleted.
 const CACHE = "byd-range-__VERSION__";
-const SHELL = ["/", "/app.css", "/ui.js", "/app.js", "/battery.js", "/charging.js", "/account.js", "/trips.js", "/pwa.js",
+const SHELL = ["/", "/app.css", "/car.js", "/ui.js", "/app.js", "/carlive.js", "/battery.js", "/charging.js", "/account.js", "/trips.js", "/pwa.js",
                "/icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {

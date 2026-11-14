@@ -3,6 +3,7 @@
 ## What this software can and cannot do
 
 - It **reads** your car's data from BYD's cloud and displays an estimate. It never sends a command to the car: there is no control code in the repository, and the sign-in is made without a control PIN.
+- **Car mode** changes how often this page asks the app and how big it draws, and shows the screen's own GPS speed and heading on the screen only (computed in the page, never sent or stored). It never looks at whether the car is moving to bypass anything: the head unit locks its own browser while driving, and nothing here works around that.
 - It sends your BYD login **only to BYD's own regional host (and, in shared mode, stores it encrypted on the server so it can keep polling for you)** (`dilinkappoversea-<xx>.byd.auto`, over HTTPS, by pyBYD). A host of any other form is refused before anything is sent. It has no analytics and no other network calls; the one optional exception is map images from OpenStreetMap (`--no-map-tiles` removes it, `--no-location` removes routes entirely).
 - It is **not** a fuel gauge or a safety function. The estimate comes from whole-percent battery data, whole-km odometer readings and your recent driving, and is shown as a band with a trust figure. Keep your own reserve (20 to 30 %) and do not use it as the only basis for a range decision.
 
@@ -15,7 +16,7 @@
 - **Sign-in is accepted only locally:** loopback address, a localhost Host header and no proxy headers. An SSH tunnel to localhost qualifies; ngrok, Cloudflare, nginx and Tailscale do not, on purpose (they can see what passes through). A reverse proxy deliberately configured to forge those headers would defeat the check; that is unsupported.
 
 ### 2. Polling can wake the car
-Each read can wake the car's telematics unit and draws on the 12 V battery. The poller is adaptive (about 30 s while driving, 15 minutes while parked, faster only while the page is open, 5 minutes while charging), writes nothing when BYD returns an empty or stale snapshot, and never wakes the car on its own to browse history. It is still a cloud poll, not a CAN bus: do not leave the car for weeks on a weak 12 V battery with a fast poll running.
+Each read can wake the car's telematics unit and draws on the 12 V battery. The poller is adaptive (about 30 s while driving, 15 minutes while parked by default and your choice from 2 to 120 minutes on the Account page, faster only while the page is open, 5 minutes while charging), writes nothing when BYD returns an empty or stale snapshot, and never wakes the car on its own to browse history. It is still a cloud poll, not a CAN bus: do not leave the car for weeks on a weak 12 V battery with a fast poll running.
 
 ### 3. Who can see your data
 - The server listens on `127.0.0.1` only. To reach it from a phone you need a tunnel or Tailscale. A tunnel provider such as ngrok **can see the traffic**; the access token is then the only protection. Prefer Tailscale.

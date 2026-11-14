@@ -26,7 +26,7 @@ import range_engine
 import settings
 
 FAST_INTERVAL = 30       # seconds, while driving
-SLOW_INTERVAL = 900      # seconds, while parked and nobody is watching (a missed trip start costs little:
+SLOW_INTERVAL = int(settings.DEFAULT_PARKED_MIN * 60)   # seconds, while parked and nobody is watching; the user can change it (a missed trip start costs little:
                          # the last parked reading is a valid anchor for the next one)
 VIEWER_PARKED_INTERVAL = 120  # seconds, while parked but someone has the app open
 VIEWER_MIN_GAP = 30      # seconds: refresh at once when the app is opened, unless polled this recently
@@ -70,6 +70,19 @@ def viewer_active(now: float | None = None) -> bool:
 
 SLEEP_TICK = 5.0         # how often a sleeping poller looks for the app being opened or the sign-in changing
 
+def parked_interval_s() -> float:
+    """The slow parked interval: the user's setting (Account page), else the default. Read every time, so a change applies at once."""
+    try:
+        m = settings.load().get("parked_interval_min")
+    except Exception:  # noqa: BLE001 - an unreadable settings file must never stop polling
+        m = None
+    return float(m) * 60.0 if m else float(SLOW_INTERVAL)
+
+
+def parked_delay(conn=None, now: dt.datetime | None = None) -> float:
+    """Seconds until the next look while the car is parked: quick while someone has the app open, else the user's parked interval."""
+    return VIEWER_PARKED_INTERVAL if viewer_active() else parked_interval_s()
+
 
 async def sleep_interruptible(interval: float, started: float, *, min_gap: float = VIEWER_MIN_GAP,
                               tick: float | None = None, stop=None) -> str:
@@ -111,6 +124,12 @@ def _is_driving(rt) -> bool:
     return _name(getattr(rt, "power_gear", None)).upper() == "ON"
 
 
+def _pressure(v) -> float | None:
+    """A tyre pressure from BYD, or None when it is missing or a placeholder (zero or negative)."""
+    n = _num(v)
+    return n if n is not None and n > 0 else None
+
+
 def _charge_name(rt) -> str:
     """First informative charging state name. 'CONNECTED' (15) is NOT charging: pyBYD notes it is unreliable."""
     for attr in ("charge_state", "charging_state"):
@@ -138,7 +157,7 @@ async def poll_once(client, vin: str, conn) -> int:
     if soc_raw is None or odo_raw is None or soc_raw <= 0 or odo_raw <= 0:
         print(f"[{dt.datetime.now().strftime('%H:%M:%S')}] BYD returned an empty snapshot (car asleep or offline); "
               f"nothing stored")
-        return VIEWER_PARKED_INTERVAL if viewer_active() else SLOW_INTERVAL
+        return parked_delay(conn)
 
     # Same car timestamp as the last stored row = BYD returned the old snapshot, the car did not report.
     car_ts_now = str(getattr(rt, "timestamp", "") or "")
@@ -146,7 +165,7 @@ async def poll_once(client, vin: str, conn) -> int:
         print(f"[{dt.datetime.now().strftime('%H:%M:%S')}] car has not reported since {car_ts_now} "
               f"(BYD online_state={_name(getattr(rt, 'online_state', None)) or '?'}, "
               f"connect_state={_name(getattr(rt, 'connect_state', None)) or '?'}); nothing new stored")
-        return VIEWER_PARKED_INTERVAL if viewer_active() else SLOW_INTERVAL
+        return parked_delay(conn)
 
     lat = lon = None
     try:
@@ -197,6 +216,12 @@ async def poll_once(client, vin: str, conn) -> int:
         # logged raw so the driving/charging rules can be checked against real drives
         "gear": _name(getattr(rt, "power_gear", None)),
         "vehicle_state": _name(getattr(rt, "vehicle_state", None)),
+        # tyre pressures in the unit BYD reports (PSI on the owner's car); recorded so a slow leak can show up over days
+        "tyre_lf": _pressure(getattr(rt, "left_front_tire_pressure", None)),
+        "tyre_rf": _pressure(getattr(rt, "right_front_tire_pressure", None)),
+        "tyre_lr": _pressure(getattr(rt, "left_rear_tire_pressure", None)),
+        "tyre_rr": _pressure(getattr(rt, "right_rear_tire_pressure", None)),
+        "tyre_unit": _name(getattr(rt, "tire_press_unit", None)) or None,
     }
     prev = conn.execute("SELECT soc, odometer_km FROM readings WHERE soc > 0 AND odometer_km > 0 "
                         "ORDER BY id DESC LIMIT 1").fetchone()
@@ -244,7 +269,7 @@ async def poll_once(client, vin: str, conn) -> int:
     if driving or time.monotonic() - _last_active < ACTIVE_GRACE:
         return FAST_INTERVAL
     # parked: poll more often only while someone is actually looking (12 V battery, see PROJECT_PLAN)
-    base = VIEWER_PARKED_INTERVAL if viewer_active() else SLOW_INTERVAL
+    base = parked_delay(conn)
     if time.monotonic() - _last_charging < CHARGE_GRACE:
         return min(base, CHARGE_INTERVAL)               # charging: the car is awake anyway; resolve the session
     return base

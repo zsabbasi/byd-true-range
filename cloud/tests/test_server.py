@@ -502,6 +502,37 @@ class BatteryApi(Base):
         self.assertEqual(b["n_samples"], 0)
         self.assertLessEqual(b["confidence_pct"], 5)
 
+    def test_full_battery_range_is_the_same_engine_at_100_percent(self):
+        db.insert_reading(self.conn, probe_row())                     # one reading, below 100%
+        self.conn.commit()
+        port = self._start()
+        d = json.loads(request(port, "/api/battery")[2])
+        st = json.loads(request(port, "/api/status")[2])
+        f = d["full_range"]
+        self.assertGreater(f["km"], st["range"]["km"])                # more battery, more range
+        self.assertLessEqual(f["low_km"], f["km"])
+        self.assertLessEqual(f["km"], f["high_km"])
+        self.assertEqual(f["kwh_per_100"], st["range"]["consumption_kwh_per_100km"])
+        self.assertNotIn("lat", json.dumps(f))
+
+    def test_full_range_at_your_own_average_comes_from_the_recorded_trips(self):
+        self._fill(56.0)
+        f = json.loads(request(self._start(), "/api/battery")[2])["full_range"]
+        o = f["own_average"]
+        self.assertIsNotNone(o)
+        self.assertGreater(o["measured_km"], 20)
+        self.assertAlmostEqual(o["km"], f["usable_kwh"] / o["kwh_per_100"] * 100, delta=1.5)    # usable energy over the average consumption
+        self.assertLess(o["low_km"], o["km"])
+        self.assertLess(o["km"], o["high_km"])
+
+    def test_no_own_average_before_any_trip(self):
+        db.insert_reading(self.conn, probe_row())
+        self.conn.commit()
+        self.assertIsNone(json.loads(request(self._start(), "/api/battery")[2])["full_range"]["own_average"])
+
+    def test_no_full_range_without_a_reading(self):
+        self.assertIsNone(json.loads(request(self._start(), "/api/battery")[2])["full_range"])
+
     def test_learned_capacity_after_a_long_drive(self):
         self._fill(56.0)                                              # true usable 56, setting says 47.4
         b = json.loads(request(self._start(), "/api/battery")[2])

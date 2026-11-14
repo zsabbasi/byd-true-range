@@ -66,7 +66,15 @@
       <div class="tile"><div class="k">Consumption</div><div class="v"><span id="cons">—</span><span class="u"> kWh/100</span></div><div id="cons2" class="k"></div></div>
     </section>
 
-    <section>
+    <section id="live" class="hero live" hidden></section>
+
+    <section id="ptsec" hidden>
+      <h2>Battery power, last 20 min</h2>
+      <svg id="ptrend" viewBox="0 0 300 80" preserveAspectRatio="none" role="img" aria-label="Battery power over the last 20 minutes: up is regen, down is drawn"></svg>
+      <div id="ptnote" class="muted small"></div>
+    </section>
+
+    <section id="sparksec">
       <h2>Battery, last 24 h</h2>
       <svg id="spark" viewBox="0 0 300 80" preserveAspectRatio="none" role="img" aria-label="Battery percentage over the last 24 hours"></svg>
       <div id="sparknote" class="muted small"></div>
@@ -85,12 +93,15 @@
     <button type="button" class="info" data-tip="disclaimer" aria-label="About this estimate">i</button>
     <a href="#/account" class="footlink">Account</a>
     <button type="button" id="installbtn" class="pill" hidden>Install app</button>
+    <button type="button" id="carbtn" class="pill">Car mode</button>
     <button type="button" id="wakebtn" class="pill" hidden aria-pressed="false" title="Keeps the screen awake while this page is open, so it keeps updating. Uses battery.">Keep screen on</button>
     <div id="disclaimer" class="tip" role="tooltip" hidden>Not a safety system. It is built from rounded whole-percent battery data and past driving, so treat the band, not the single number. Do not use it as the only basis for range decisions.</div>
   </footer>
 </main>
+<script src="/car.js"></script>
 <script src="/ui.js"></script>
 <script src="/app.js"></script>
+<script src="/carlive.js"></script>
 <script src="/battery.js"></script>
 <script src="/charging.js"></script>
 <script src="/account.js"></script>

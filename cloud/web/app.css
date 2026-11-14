@@ -114,3 +114,76 @@ button.primary:disabled{opacity:.4;cursor:not-allowed}
 .pill:disabled{opacity:.45;cursor:not-allowed}
 .stale a, #batnote a { color: #93c5fd; }
 body.anon .tabs, body.anon .footlink { display: none; }
+
+/* Car mode (car.js adds the class "car" on a car's screen): larger and easier to hit */
+html.car body{font-size:19px}
+html.car main{max-width:min(98vw,1000px)}
+html.car .tabs a{padding:16px 0;font-size:20px}
+html.car .pill{font-size:15px;padding:12px 16px}
+html.car .big{font-size:clamp(96px,14vw,190px)}
+html.car .big.small{font-size:clamp(56px,9vw,110px)}
+html.car .tile .v{font-size:36px}
+html.car .note,html.car .muted,html.car footer{font-size:16px}
+html.car button.info{min-width:34px;min-height:34px}
+
+/* Live card (carlive.js, car mode only) */
+.live{margin:12px 0}
+.live .row2{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.live .spd{font-size:clamp(80px,18vw,170px);font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.live .v.pre{white-space:pre-line;font-size:22px;line-height:1.25}
+.live .v.warnv{color:var(--warn)}
+.live .dimmed{opacity:.5}
+.live .pill{margin:8px 8px 0 0}
+#ptrend{width:100%;height:80px;color:var(--muted)}
+html.car .live .v{font-size:30px}
+html.car .live .v.pre{font-size:26px}
+.live .row2 .unit{font-size:32px;font-weight:600}
+.live .label{margin-top:14px}
+.live > .label:first-child{margin-top:0}
+
+/* Car, Now page: everything fits one landscape screen, no scrolling. Speed (GPS) sits on the right of the range heading. */
+html.carnow,html.carnow body{height:100%;overflow:hidden}
+html.carnow main{max-width:none;height:100vh;display:flex;flex-direction:column;padding:6px 14px}
+html.carnow .tabs{margin:0 0 6px}
+html.carnow .tabs a{padding:8px 0;font-size:18px}
+html.carnow header{padding:0 2px 4px}
+html.carnow footer,html.carnow #sparksec,html.carnow #batnote:empty{display:none}
+html.carnow #view-now{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
+html.carnow #live{display:contents}
+html.carnow #view-now > .hero[aria-live]{display:grid;grid-template-columns:1fr auto;column-gap:24px;padding:8px 16px 10px}
+html.carnow #view-now > .hero[aria-live] > *{grid-column:1}
+html.carnow #view-now > .hero[aria-live] > .spdbox{grid-column:2;grid-row:1 / span 7;align-self:center;text-align:right;margin:0}
+html.carnow .hero .big{font-size:min(20vh,13vw);margin:0}
+html.carnow .hero .bar{margin:8px 0 2px}
+html.carnow .hero .legend{display:none}
+html.carnow .hero .row{margin-top:4px}
+html.carnow .spdbox .row2{justify-content:flex-end}
+html.carnow .spdbox .spd{font-size:min(15vh,10vw)}
+html.carnow .spdbox .unit{font-size:22px}
+html.carnow .spdbox .sub{font-size:15px;font-weight:500;color:var(--muted);min-height:0}
+html.carnow .spdbox .note{font-size:14px}
+html.carnow .livetiles{grid-template-columns:repeat(5,1fr);gap:8px;margin:0}
+html.carnow .livetiles .tile{padding:6px 10px}
+html.carnow .livetiles .v{font-size:26px}
+html.carnow .livetiles .v.pre{font-size:17px;line-height:1.2}
+html.carnow .livetiles .k{font-size:12px}
+.tappable{cursor:pointer}
+html.carnow #ptsec{flex:1;min-height:70px;display:flex;flex-direction:column}
+html.carnow #ptsec h2{margin:0 2px 4px}
+html.carnow #ptsec svg{flex:1;height:auto;min-height:40px}
+html.carnow #ptnote{display:none}
+.pnow{text-transform:none;letter-spacing:0;color:var(--fg);font-size:16px;font-weight:700;margin-right:6px}
+html.carnow #batnote{padding:3px 12px;margin:0 0 4px;font-size:14px;border-width:1px;border-radius:10px}
+html.carnow .livetiles .tile > .k:nth-child(3){display:none}
+html.carnow .livetiles .tile{min-width:0}
+html.carnow .hero .big{font-size:min(17vh,12vw)}
+html.carnow .hero .sub{font-size:17px;min-height:0}
+html.carnow #stale{margin:0 0 4px;padding:4px 12px}
+html.carnow .livetiles{grid-template-columns:repeat(5,minmax(0,1fr))}
+html.carnow .tabs a{padding:5px 0;font-size:17px}
+html.carnow .hero .big{font-size:min(15vh,11vw)}
+html.carnow .hero .bar{margin:4px 0 0}
+html.carnow .hero .row{margin-top:2px}
+html.carnow .chip{padding:1px 10px}
+html.carnow .spdbox .spd{font-size:min(13vh,9vw)}
+html.carnow .livetiles .v{font-size:24px}
