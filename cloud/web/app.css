@@ -187,3 +187,16 @@ html.carnow .hero .row{margin-top:2px}
 html.carnow .chip{padding:1px 10px}
 html.carnow .spdbox .spd{font-size:min(13vh,9vw)}
 html.carnow .livetiles .v{font-size:24px}
+/* The head unit draws its own bar (climate, home) over the bottom of the page: keep the layout above it, and a little tighter. */
+html.carnow main{padding-bottom:11vh}
+html.carnow .hero .big{font-size:min(14vh,10vw)}
+html.carnow .spdbox .spd{font-size:min(12vh,8.5vw)}
+html.carnow #view-now > .hero[aria-live]{padding:6px 16px 8px}
+html.carnow .tabs a{padding:4px 0}
+html.carnow #view-now{gap:6px}
+html.carnow #view-now > .hero[aria-live] > .label{grid-row:1}
+html.carnow #view-now > .hero[aria-live] > .big{grid-row:2}
+html.carnow #view-now > .hero[aria-live] > #band{grid-row:3}
+html.carnow #view-now > .hero[aria-live] > .row{grid-row:3;justify-self:start;align-self:center;margin:0 0 0 160px}
+html.carnow #view-now > .hero[aria-live] > .bar{grid-row:4}
+html.carnow main{padding-bottom:10.5vh}
